@@ -189,6 +189,8 @@ _QUOTE_CHARACTERS = {
 _PARENTHETICAL_RE = re.compile(r"\(([^()]*)\)|（([^（）]*)）")
 _TERMINAL_PUNCTUATION = frozenset(".!?。！？…")
 _TRAILING_WRAPPERS = frozenset("」』”’\"')]}）］｝")
+_DECORATIVE_SUFFIX_CHARS = frozenset("❤♥♡💕💖💗💓💞💘💝🎵♪♫♬✨💪")
+_VARIATION_SELECTORS = frozenset("\ufe0e\ufe0f")
 _INCOMPLETE_KOREAN_END_RE = re.compile(
     r"(?:^|[\s,，])(?:울|하|되|있|없|않|였|했|었|겠|시키|말하|느끼|"
     r"생각하|이어지|계속되|퍼지|흐르|떨리|울리|들리)$"
@@ -236,10 +238,22 @@ def _nonempty_parenthetical_count(text: str) -> int:
     )
 
 
+def _is_decorative_suffix_char(character: str) -> bool:
+    return (
+        character in _DECORATIVE_SUFFIX_CHARS
+        or character in _VARIATION_SELECTORS
+        or "\U0001f3fb" <= character <= "\U0001f3ff"
+    )
+
+
 def _without_trailing_wrappers(text: str) -> str:
     value = text.rstrip()
-    while value and value[-1] in _TRAILING_WRAPPERS:
-        value = value[:-1].rstrip()
+    while value:
+        character = value[-1]
+        if character in _TRAILING_WRAPPERS or _is_decorative_suffix_char(character):
+            value = value[:-1].rstrip()
+            continue
+        break
     return value
 
 
