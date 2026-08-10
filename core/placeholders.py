@@ -65,7 +65,8 @@ class PlaceholderEngine:
             ("existing_placeholder", r"\[\[[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*\]\]"),
             (
                 "prompt_delimiter",
-                r"<<<(?:CONTEXT|END_CONTEXT|TARGETS|END_TARGETS)>>>",
+                r"<<<(?:CONTEXT|END_CONTEXT|TARGETS|END_TARGETS|"
+                r"REFERENCE_CONTEXT|END_REFERENCE_CONTEXT|SOURCE|END_SOURCE)>>>",
             ),
             ("url", r"(?:https?|ftp)://[^\s<>\]\[{}\"']+"),
             ("markup", r"</?[A-Za-z][^<>\r\n]*?>"),

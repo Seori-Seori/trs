@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 from collections.abc import Callable
 from typing import Any
 
-from core.batching import build_batches
 from core.checkpoint import CheckpointStore
 from core.config import AppConfig
+from core.diagnostics import FailureDebugStore
 from core.language import detect_language
-from core.parser import ResponseParser
+from core.parser import SingleTranslationParser
 from core.placeholders import PlaceholderEngine
 from core.recovery import RecoveryEngine
 from core.segment import Segment, SegmentStatus, ValidationIssue
@@ -40,17 +40,19 @@ class TranslationPipeline:
         translator: Translator,
         checkpoint: CheckpointStore | None = None,
         progress: Callable[[str], None] | None = None,
+        failure_debug: FailureDebugStore | None = None,
     ) -> None:
         self.config = config
         self.profile = profile
         self.translator = translator
         self.checkpoint = checkpoint
         self.progress = progress or (lambda _message: None)
+        self.failure_debug = failure_debug
         self.placeholder_engine = PlaceholderEngine(
             config.placeholders.custom_patterns,
             protect_internal_newlines=config.placeholders.protect_internal_newlines,
         )
-        self.parser = ResponseParser()
+        self.parser = SingleTranslationParser()
         self.validator = ValidationCoordinator(
             config.validators, self.placeholder_engine, profile
         )
@@ -89,11 +91,6 @@ class TranslationPipeline:
             self.checkpoint.save_segments(already_korean_segments)
 
         pending = [segment for segment in segments if segment.status != SegmentStatus.VALID]
-        batches = build_batches(
-            pending,
-            batch_size=self.config.translation.batch_size,
-            max_batch_chars=self.config.translation.max_batch_chars,
-        )
         global_issues: list[ValidationIssue] = []
 
         def save_valid_batch(valid_segments: list[Segment]) -> None:
@@ -109,21 +106,25 @@ class TranslationPipeline:
             translation_config=self.config.translation,
             profile=self.profile,
             on_valid_batch=save_valid_batch,
+            on_failed_attempt=(
+                self.failure_debug.record if self.failure_debug is not None else None
+            ),
+            on_validated=(
+                self.failure_debug.clear if self.failure_debug is not None else None
+            ),
         )
         self.progress(
             f"총 {len(segments)}개 문단: 재개 {resumed}, 한국어 유지 {already_korean}, 번역 대상 {len(pending)}"
         )
-        for batch_index, batch in enumerate(batches, start=1):
-            self.progress(
-                f"배치 {batch_index}/{len(batches)} 번역 중 ({len(batch)}개 문단)"
-            )
-            result = recovery.translate_batch(batch)
+        for segment_index, segment in enumerate(pending, start=1):
+            self.progress(f"문단 {segment_index}/{len(pending)} 번역 중")
+            result = recovery.translate_segment(segment)
             global_issues.extend(result.global_issues)
-            recovery.global_issues.clear()
             if self.checkpoint and result.failed:
                 self.checkpoint.save_segments(result.failed)
             self.progress(
-                f"배치 {batch_index}/{len(batches)} 완료: VALID {len(result.valid)}, FAILED {len(result.failed)}"
+                f"문단 {segment_index}/{len(pending)} 완료: "
+                f"{'VALID' if result.valid else 'FAILED'}"
             )
 
         nonterminal = [

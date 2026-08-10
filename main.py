@@ -8,6 +8,7 @@ from pathlib import Path
 from adapters.text import TextAdapter
 from core.checkpoint import CheckpointStore
 from core.config import ConfigError, load_config, load_profile
+from core.diagnostics import FailureDebugStore
 from core.pipeline import TranslationPipeline
 from core.reporting import build_qa_report, write_json_atomic
 from translators.base import TranslationTransportError
@@ -43,6 +44,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     resume_group = parser.add_mutually_exclusive_group()
     resume_group.add_argument("--resume", dest="resume", action="store_true", default=True)
     resume_group.add_argument("--no-resume", dest="resume", action="store_false")
+    parser.add_argument(
+        "--debug-failures",
+        action="store_true",
+        help=(
+            "실패한 단일 요청의 bounded prompt/응답을 "
+            "<입력명>.seori-debug.json에 기록합니다"
+        ),
+    )
     return parser
 
 
@@ -129,6 +138,16 @@ def run(argv: list[str] | None = None) -> int:
         default_output, checkpoint_path, report_path = _default_paths(
             input_path, config.output.suffix
         )
+        debug_path = input_path.with_name(
+            f"{input_path.stem}.seori-debug.json"
+        )
+        failure_debug = (
+            FailureDebugStore(debug_path, mode=mode)
+            if args.debug_failures
+            else None
+        )
+        if failure_debug is not None:
+            failure_debug.reset()
         output_path = (args.output or default_output).expanduser().resolve()
         if output_path == input_path:
             raise ConfigError("출력 경로는 원본 TXT와 달라야 합니다")
@@ -178,12 +197,15 @@ def run(argv: list[str] | None = None) -> int:
             print(f"프로필: {profile.get('name', profile_selector)}")
             print(f"모델: {config.ollama.model}")
             print(f"백업: {backup_path}")
+            if failure_debug is not None:
+                print(f"실패 디버그: {debug_path}")
             pipeline = TranslationPipeline(
                 config,
                 profile,
                 translator,
                 checkpoint,
                 progress=lambda message: print(f"[Seori] {message}", flush=True),
+                failure_debug=failure_debug,
             )
             result = pipeline.process(segments, resume=args.resume)
 
@@ -205,6 +227,12 @@ def run(argv: list[str] | None = None) -> int:
         print(f"출력: {output_path}")
         if config.output.qa_report:
             print(f"QA: {report_path}")
+        if failure_debug is not None and failure_debug.last_write_error is not None:
+            print(
+                f"경고: 실패 디버그 파일을 기록하지 못했습니다: "
+                f"{failure_debug.last_write_error}",
+                file=sys.stderr,
+            )
         print(
             "완료: "
             f"VALID {summary['valid']}/{summary['total']}, "

@@ -4,6 +4,7 @@ __pycache__/
 *.seori.sqlite-shm
 *.seori.sqlite-wal
 *.qa.json
+*.seori-debug.json
 *.ko.txt
 backup/
 .pytest_cache/

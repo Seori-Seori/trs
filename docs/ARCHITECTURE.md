@@ -30,6 +30,7 @@ seori_translator/
 │  ├─ parser.py
 │  ├─ prompting.py
 │  ├─ recovery.py
+│  ├─ diagnostics.py
 │  ├─ checkpoint.py
 │  ├─ language.py
 │  ├─ placeholders.py
@@ -140,17 +141,17 @@ Adapter.load
  -> protect placeholders
  -> checkpoint lookup
  -> context build
- -> batch build
- -> translator.translate
- -> parse response ONCE
+ -> build native single-Segment prompt without exposing internal ID
+ -> translator.translate text only
+ -> parse/interpret response ONCE as the known Segment candidate
  -> structure validation
  -> Korean validation
  -> placeholder validation
  -> risk detection
  -> accept valid segments immediately
  -> checkpoint valid segments immediately
- -> partial repair failed segments only
- -> split retry only when partial repair fails
+ -> partial repair failed Segment only
+ -> safe-split only for a long Segment
  -> terminal failure recording
  -> Adapter.save
  -> QA report
@@ -162,39 +163,28 @@ Adapter.load
 
 기존 PowerShell v6에서 검증된 다음 동작은 Python에서도 유지한다.
 
-- batch translation
+- Segment identity/order owned by Python, never by HY-MT output
 - checkpoint/resume
-- 완료 batch를 재검증한 뒤 skip
+- 완료된 VALID Segment를 재검증한 뒤 skip
 - 모델 응답 1회 parse
-- 정상 행 salvage
-- 문제 행만 partial repair
-- 문제 비율이 클 때에만 batch retry 가능
+- 정상 Segment 즉시 checkpoint
+- 문제 Segment만 단건 partial repair
 - 긴 block 자동 split
 - block 경계를 보존한 split
-- single-row fallback에서도 주변 context 제공
+- single/native 요청에서도 주변 context 제공
 - 최종 실패만 failure log
-- expected ID / actual ID 비교
 - 원본 SHA-256 기반 안전장치
 
 ## 8. v6에서 수정해야 하는 구멍
 
 Python v7에서는 다음을 명시적으로 막는다.
 
-### Unexpected ID
+### Internal identity isolation
 
-expected에 없는 ID가 하나라도 있으면 구조 오류다.
-
-단 이미 정상 검증된 expected Segment는 버리지 않는다.
-
-### Row ID leak
-
-번역문 내부에 다른 Segment ID가 나타나면 구조 오류다.
-
-예:
-
-```text
-SEG_0001    번역 SEG_0002 다음 행 번역
-```
+`Segment.id`는 checkpoint, 검증 상태, 원본 재조립에만 쓰는 Python 내부 메타데이터다.
+기본 HY-MT prompt에 넣지 않으며 모델 응답에서 돌려받도록 요구하지 않는다.
+레거시 row parser의 unexpected-ID/row-ID-leak 검사는 호환 테스트용으로 유지할 수
+있지만 기본 native 경로의 매핑에는 사용하지 않는다.
 
 ### Unexpected script
 
@@ -206,27 +196,21 @@ SEG_0001    번역 SEG_0002 다음 행 번역
 
 ## 9. Parser 계약
 
-응답은 한 번만 parse한다.
+요청 하나는 이미 알려진 Segment 하나에 대응하며, 모델은 한국어 번역문만 반환한다.
+응답은 한 번만 해석하고 그 결과를 placeholder 복원과 모든 validator에서 재사용한다.
 
-권장 모델 출력 형식:
-
-```text
-SEG_00000001<TAB>한국어 번역
-SEG_00000002<TAB>한국어 번역
-```
-
-Parser 결과 예:
+기본 native parser 결과 예:
 
 ```python
-ParsedResponse(
-    rows={...},
-    duplicates=[...],
-    malformed_lines=[...],
+SingleTranslationResponse(
+    translation="한국어 번역",
     raw_response="..."
 )
 ```
 
-Validator와 Recovery는 raw response를 다시 parse하면 안 된다.
+기존 `ResponseParser`는 레거시 row 프로토콜 회귀를 위해 남겨도 되지만 기본 HY-MT
+번역 경로는 이에 의존하지 않는다. Validator와 Recovery는 raw response를 다시
+parse하면 안 된다.
 
 ## 10. Validator 결과
 

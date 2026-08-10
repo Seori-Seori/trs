@@ -24,11 +24,100 @@ _REPAIR_HINTS: dict[str, str] = {
     "EMPTY_TRANSLATION": "원문의 내용을 생략하지 말고 한국어 번역을 출력하십시오.",
     "MISSING_ID": "요청된 대상 ID를 빠뜨리지 마십시오.",
     "PROMPT_LEAK": "지시문이나 설명을 복사하지 말고 번역만 출력하십시오.",
+    "UNBALANCED_DELIMITERS": "원문의 괄호와 구분자 구조를 빠짐없이 균형 있게 유지하십시오.",
+    "UNBALANCED_QUOTES": "원문의 인용부호 구조를 빠짐없이 균형 있게 유지하십시오.",
+    "BRACKET_STRUCTURE_LOSS": "원문에 있는 괄호 쌍을 번역에서도 유지하십시오.",
+    "QUOTE_STRUCTURE_LOSS": "원문에 있는 인용부호 쌍을 번역에서도 유지하십시오.",
 }
 
 
 def _context_list(items: list[str]) -> str:
     return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+
+
+def _profile_instructions(profile: dict[str, Any]) -> list[str]:
+    instructions = profile.get("instructions", [])
+    if not isinstance(instructions, list):
+        raise PromptBuildError("Profile instructions must be a list")
+    return [str(instruction) for instruction in instructions]
+
+
+def _prepared_source(segment: Segment) -> str:
+    return (
+        segment.prepared_source
+        if segment.prepared_source is not None
+        else segment.source
+    )
+
+
+def build_single_translation_prompt(
+    segment: Segment,
+    profile: dict[str, Any],
+    *,
+    mode: str = "single",
+) -> str:
+    """Build the default HY-MT prompt without exposing program Segment identity."""
+    if segment.status == SegmentStatus.VALID:
+        raise RuntimeError(
+            f"Invariant violation: VALID segment {segment.id} entered prompt builder"
+        )
+
+    mode_instruction = {
+        "single": "아래 원문 하나를 문맥을 참고하여 한국어로 번역하십시오.",
+        "repair": "이전 응답은 검증에 실패했습니다. 아래 원문 하나를 새로 번역하십시오.",
+        "split": "긴 문단에서 안전하게 분리된 아래 원문 조각 하나를 번역하십시오.",
+    }.get(mode, "아래 원문 하나를 한국어로 번역하십시오.")
+
+    lines = [
+        "Translate exactly one source text into Korean.",
+        "당신은 일본어·중국어·영어를 자연스러운 한국어로 옮기는 전문 번역가입니다.",
+        mode_instruction,
+        "목표 언어는 반드시 한국어입니다.",
+        "원문의 의미, 사실, 수치, 고유명사, 부정과 상태를 추가·삭제·반전하지 마십시오.",
+        "대괄호 두 개로 감싼 보호 토큰은 글자 하나도 바꾸거나 옮기거나 복제하지 마십시오.",
+        "문맥은 번역 판단에만 사용하고 문맥 문장은 출력하지 마십시오.",
+        "번역문만 출력하고 설명, 머리말, 표식, Markdown 코드 블록을 출력하지 마십시오.",
+    ]
+    lines.extend(_profile_instructions(profile))
+    lines.extend(
+        [
+            "<<<REFERENCE_CONTEXT>>>",
+            f"앞 문맥: {_context_list(segment.context_before)}",
+            f"뒤 문맥: {_context_list(segment.context_after)}",
+            "<<<END_REFERENCE_CONTEXT>>>",
+        ]
+    )
+
+    if mode == "repair":
+        codes = sorted(
+            {
+                issue.code
+                for issue in segment.validation_issues
+                if issue.severity == ValidationSeverity.ERROR
+            }
+        )
+        if codes:
+            lines.append(f"이전 응답 실패 이유: {','.join(codes)}")
+            hints = list(
+                dict.fromkeys(
+                    _REPAIR_HINTS[code]
+                    for code in codes
+                    if code in _REPAIR_HINTS
+                )
+            )
+            if hints:
+                lines.append(f"수정 지침: {' '.join(hints)}")
+
+    lines.extend(
+        [
+            f"원문 언어: {segment.source_language}",
+            "<<<SOURCE>>>",
+            _prepared_source(segment),
+            "<<<END_SOURCE>>>",
+            "위 원문의 한국어 번역문만 출력하십시오.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_prompt(
@@ -43,9 +132,7 @@ def build_prompt(
         ids = [segment.id for segment in segments if segment.status == SegmentStatus.VALID]
         raise RuntimeError(f"Invariant violation: VALID segments entered prompt builder: {ids}")
 
-    profile_instructions = profile.get("instructions", [])
-    if not isinstance(profile_instructions, list):
-        raise PromptBuildError("Profile instructions must be a list")
+    profile_instructions = _profile_instructions(profile)
 
     mode_instruction = {
         "batch": "아래 번역 대상만 번역하십시오.",
@@ -66,13 +153,9 @@ def build_prompt(
         "출력 형식은 대상 ID, 탭 문자 1개, 한국어 번역입니다.",
         "설명, 머리말, Markdown 코드 블록을 출력하지 마십시오.",
     ]
-    lines.extend(str(instruction) for instruction in profile_instructions)
+    lines.extend(profile_instructions)
     for ordinal, segment in enumerate(segments, start=1):
-        prepared = (
-            segment.prepared_source
-            if segment.prepared_source is not None
-            else segment.source
-        )
+        prepared = _prepared_source(segment)
         if "\n" in prepared or "\r" in prepared or "\t" in prepared:
             raise PromptBuildError(
                 f"Prepared source for {segment.id} contains an unprotected tab/newline"

@@ -47,6 +47,7 @@ def build_qa_report(
     failed = pipeline_result.failed
     return {
         "version": "7.0",
+        "protocol": "hy-mt-native-single",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_file": str(Path(source_path).resolve()),
         "source_sha256": source_sha256,
@@ -91,6 +92,9 @@ def build_qa_report(
                         if issue.severity == ValidationSeverity.ERROR
                     }
                 ),
+                "request_mode": segment.last_request_mode,
+                "last_prompt": segment.last_prompt,
+                "last_prompt_truncated": segment.last_prompt_truncated,
                 "last_raw_response": segment.last_raw_response,
                 "last_raw_response_truncated": segment.last_raw_response_truncated,
                 "issues": [_issue_to_dict(issue) for issue in segment.validation_issues],

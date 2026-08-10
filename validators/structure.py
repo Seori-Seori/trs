@@ -22,7 +22,7 @@ _PROMPT_LEAK_PATTERNS = [
         r"번역\s*규칙",
         r"다음(?:의)?\s*텍스트를\s*번역",
         r"출력\s*형식",
-        r"<<<(?:item|targets|context|failures|end)",
+        r"<<<(?:item|targets|context|failures|reference_context|source|end)",
     )
 ]
 

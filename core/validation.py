@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.config import ValidatorsConfig
-from core.parser import ParsedResponse
+from core.parser import ParsedResponse, SingleTranslationResponse
 from core.placeholders import PlaceholderEngine, PlaceholderError
 from core.segment import Segment, ValidationResult, ValidationSeverity
 from validators.korean import validate_korean
@@ -84,6 +84,22 @@ class ValidationCoordinator:
                 translation=candidate if not result.has_errors else None,
             )
         return ResponseEvaluation(evaluations, structure.global_result)
+
+    def evaluate_single(
+        self,
+        response: SingleTranslationResponse,
+        segment: Segment,
+    ) -> ResponseEvaluation:
+        """Map one native response to its already-known Segment and reuse validators."""
+        synthetic = ParsedResponse(
+            rows={segment.id: response.translation},
+            row_order=[segment.id],
+            duplicates=[],
+            malformed_lines=[],
+            raw_response=response.raw_response,
+            code_fence_removed=response.code_fence_removed,
+        )
+        return self.evaluate_response(synthetic, [segment])
 
     def validate_final(self, segment: Segment, translation: str) -> ValidationResult:
         synthetic = ParsedResponse(

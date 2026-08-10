@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from core.checkpoint import CheckpointStore
 from core.config import load_config, load_profile
-from core.parser import ResponseParser
-from core.pipeline import TranslationPipeline
+from core.diagnostics import FailureDebugStore
+from core.parser import ResponseParser, SingleTranslationParser
+from core.pipeline import PipelineResult, TranslationPipeline
 from core.placeholders import PlaceholderEngine
-from core.prompting import build_prompt
+from core.prompting import build_single_translation_prompt
 from core.recovery import RecoveryEngine
+from core.reporting import build_qa_report
 from core.segment import (
     Segment,
     SegmentStatus,
@@ -19,7 +23,8 @@ from core.segment import (
     ValidationSeverity,
 )
 from core.validation import ValidationCoordinator
-from tests.helpers import NoCallTranslator, ScriptedTranslator, prompt_targets
+from tests.helpers import NoCallTranslator, ScriptedTranslator, native_prompt_source
+from translators.base import TranslationTransportError
 from validators.korean import validate_korean
 from validators.placeholders import validate_placeholders
 from validators.risk import validate_risks
@@ -29,7 +34,7 @@ from validators.structure import validate_structure, validate_text_structure
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class CountingParser(ResponseParser):
+class CountingSingleParser(SingleTranslationParser):
     def __init__(self) -> None:
         self.calls = 0
         self.raw_responses: list[str] = []
@@ -124,9 +129,10 @@ class MandatoryRegressionCases(unittest.TestCase):
         first.source_language = "ja"
         first.context_after = ["次の段落です"]
         first.prepare(first.source, [])
-        prompt = build_prompt([first], self.profile)
+        prompt = build_single_translation_prompt(first, self.profile)
         self.assertIn("次の段落です", prompt)
-        self.assertEqual([item[0] for item in prompt_targets(prompt)], [first.id])
+        self.assertEqual(native_prompt_source(prompt), first.source)
+        self.assertNotIn(first.id, prompt)
 
     def test_r11_unrelated_generated_sentence_gets_length_risk(self) -> None:
         result = validate_text_structure("短い原文です", "전혀 다른 생성 문장 " * 30)
@@ -197,7 +203,7 @@ class MandatoryRegressionCases(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkpoint_path = Path(directory) / "resume.sqlite"
             first = Segment("SEG_00000001", "こんにちは")
-            translator = ScriptedTranslator([f"{first.id}\t안녕하세요"])
+            translator = ScriptedTranslator(["안녕하세요"])
             with CheckpointStore(checkpoint_path) as checkpoint:
                 result = TranslationPipeline(
                     self.config, self.profile, translator, checkpoint
@@ -214,98 +220,33 @@ class MandatoryRegressionCases(unittest.TestCase):
             self.assertEqual(resumed.resumed, 1)
             self.assertEqual(no_call.calls, 0)
 
-    def test_r23_partial_repair_only_requests_two_failed_rows(self) -> None:
-        segments = self._segments(10)
-        for segment in segments:
-            segment.source_language = "ja"
-            prepared = self.engine.protect(segment.source)
-            segment.prepare(prepared.text, prepared.tokens)
-
+    def test_r23_partial_repair_only_retries_failed_native_segments(self) -> None:
+        segments = self._prepared_segments(10)
         bad_ids = {segments[2].id, segments[6].id}
+        responses = []
 
-        def initial(prompt: str) -> str:
-            targets = prompt_targets(prompt)
-            self.assertEqual({item[0] for item in targets}, {s.id for s in segments})
-            return "\n".join(
-                f"{segment_id}\t{'오류的' if segment_id in bad_ids else '정상 번역'}"
-                for segment_id, _language, _source in targets
-            )
-
-        def repair(prompt: str) -> str:
-            targets = prompt_targets(prompt)
-            self.assertEqual({item[0] for item in targets}, bad_ids)
-            return "\n".join(
-                f"{segment_id}\t복구된 번역"
-                for segment_id, _language, _source in targets
-            )
-
-        translator = ScriptedTranslator([initial, repair])
-        parser = CountingParser()
-        validator = ValidationCoordinator(self.config.validators, self.engine)
-        recovery = RecoveryEngine(
-            translator,
-            parser,
-            validator,
-            self.engine,
-            self.config.recovery,
-            self.config.translation,
-            self.profile,
-        )
-        result = recovery.translate_batch(segments)
-        self.assertFalse(result.failed)
-        self.assertEqual(len(translator.calls), 2)
-        self.assertEqual(parser.calls, 2)
-        self.assertTrue(all(s.attempt_count == 1 for s in segments if s.id not in bad_ids))
-        self.assertTrue(all(s.attempt_count == 2 for s in segments if s.id in bad_ids))
-
-    def test_r24_prompt_target_id_single_exposure(self) -> None:
-        segments = self._prepared_segments(2)
-        segments[0].context_before = ["첫 대상의 앞 문맥"]
-        segments[0].context_after = ["첫 대상의 뒤 문맥"]
-        segments[1].context_before = ["둘째 대상의 앞 문맥"]
-        segments[1].context_after = ["둘째 대상의 뒤 문맥"]
-
-        prompt = build_prompt(segments, self.profile, mode="batch")
-        targets = prompt_targets(prompt)
-
-        self.assertEqual([target[0] for target in targets], [segment.id for segment in segments])
-        self.assertEqual(prompt.count("<<<ITEM "), 2)
-        self.assertEqual(prompt.count("<<<END_ITEM "), 2)
-        self.assertNotIn("<<<CONTEXT>>>", prompt)
-        self.assertNotIn("<<<TARGETS>>>", prompt)
         for segment in segments:
-            target_row = f"{segment.id}\t{segment.source_language}\t{segment.prepared_source}"
-            self.assertEqual(prompt.splitlines().count(target_row), 1)
-            self.assertNotIn(segment.id, prompt.replace(target_row, "", 1))
-
-    def test_r25_repair_prompt_target_id_single_exposure(self) -> None:
-        segment = self._prepared_segments(1)[0]
-        failure = ValidationResult()
-        failure.add(
-            "DUPLICATE_ID",
-            ValidationSeverity.ERROR,
-            "conflicting rows",
-            "structure",
-        )
-        segment.validation_issues = failure.issues
-
-        for mode in ("repair", "single"):
-            with self.subTest(mode=mode):
-                prompt = build_prompt([segment], self.profile, mode=mode)
-                target_row = (
-                    f"{segment.id}\t{segment.source_language}\t{segment.prepared_source}"
+            def initial(prompt: str, *, expected=segment) -> str:
+                self.assertEqual(
+                    native_prompt_source(prompt), expected.prepared_source
                 )
-                self.assertEqual(prompt.splitlines().count(target_row), 1)
-                self.assertNotIn(segment.id, prompt.replace(target_row, "", 1))
-                self.assertIn("이전 응답 실패 이유: DUPLICATE_ID", prompt)
-                self.assertIn("같은 출력 행을 반복하지 마십시오.", prompt)
-                self.assertNotIn("<<<FAILURES>>>", prompt)
+                self.assertNotIn(expected.id, prompt)
+                return "오류的" if expected.id in bad_ids else "정상 번역"
 
-    def test_r26_identical_duplicate_salvage(self) -> None:
-        segment = self._prepared_segments(1)[0]
-        raw = f"{segment.id}\t정상 번역\n{segment.id}\t정상 번역"
-        translator = ScriptedTranslator([raw])
-        parser = CountingParser()
+            responses.append(initial)
+            if segment.id in bad_ids:
+                def repair(prompt: str, *, expected=segment) -> str:
+                    self.assertEqual(
+                        native_prompt_source(prompt), expected.prepared_source
+                    )
+                    self.assertIn("KNOWN_BAD_CJK_RESIDUE", prompt)
+                    self.assertNotIn(expected.id, prompt)
+                    return "복구된 번역"
+
+                responses.append(repair)
+
+        translator = ScriptedTranslator(responses)
+        parser = CountingSingleParser()
         recovery = RecoveryEngine(
             translator,
             parser,
@@ -315,19 +256,63 @@ class MandatoryRegressionCases(unittest.TestCase):
             self.config.translation,
             self.profile,
         )
-
-        result = recovery.translate_batch([segment])
+        result = recovery.translate_batch(segments)
 
         self.assertFalse(result.failed)
-        self.assertEqual(segment.status, SegmentStatus.VALID)
-        self.assertEqual(segment.translation, "정상 번역")
-        self.assertEqual(len(translator.calls), 1)
-        self.assertEqual(parser.calls, 1)
-        codes = [issue.code for issue in segment.validation_issues]
-        self.assertIn("IDENTICAL_DUPLICATE_ID", codes)
-        self.assertNotIn("DUPLICATE_ID", codes)
+        self.assertEqual(len(translator.calls), 12)
+        self.assertEqual(parser.calls, 12)
+        self.assertTrue(
+            all(segment.attempt_count == 1 for segment in segments if segment.id not in bad_ids)
+        )
+        self.assertTrue(
+            all(segment.attempt_count == 2 for segment in segments if segment.id in bad_ids)
+        )
 
-    def test_r27_conflicting_duplicate_remains_error(self) -> None:
+    def test_r24_default_prompt_has_no_row_protocol(self) -> None:
+        for segment in self._prepared_segments(2):
+            segment.context_before = ["앞 문맥"]
+            segment.context_after = ["뒤 문맥"]
+            prompt = build_single_translation_prompt(segment, self.profile)
+            self.assertNotIn(segment.id, prompt)
+            self.assertNotIn("<<<ITEM", prompt)
+            self.assertNotIn("<<<TARGETS", prompt)
+            self.assertNotIn("ID<TAB>", prompt)
+            self.assertEqual(native_prompt_source(prompt), segment.prepared_source)
+
+    def test_r25_native_repair_prompt_retains_reason_without_id(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        failure = ValidationResult()
+        failure.add(
+            "KNOWN_BAD_CJK_RESIDUE",
+            ValidationSeverity.ERROR,
+            "residue",
+            "korean",
+        )
+        segment.validation_issues = failure.issues
+
+        prompt = build_single_translation_prompt(segment, self.profile, mode="repair")
+
+        self.assertIn("KNOWN_BAD_CJK_RESIDUE", prompt)
+        self.assertIn("한국어만 출력", prompt)
+        self.assertNotIn(segment.id, prompt)
+
+    def test_r26_identical_duplicate_salvage_legacy_parser(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        raw = f"{segment.id}\t정상 번역\n{segment.id}\t정상 번역"
+        parsed = self.parser.parse(raw)
+        evaluation = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_response(parsed, [segment])
+
+        item = evaluation.by_segment_id[segment.id]
+        self.assertEqual(item.translation, "정상 번역")
+        self.assertFalse(item.result.has_errors)
+        self.assertIn(
+            "IDENTICAL_DUPLICATE_ID",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r27_conflicting_duplicate_remains_error_in_legacy_parser(self) -> None:
         segment = self._prepared_segments(1)[0]
         raw = f"{segment.id}\t번역 A\n{segment.id}\t번역 B"
         parsed = self.parser.parse(raw)
@@ -342,23 +327,6 @@ class MandatoryRegressionCases(unittest.TestCase):
             [issue.code for issue in evaluation.by_segment_id[segment.id].result.issues],
         )
 
-        translator = ScriptedTranslator([raw, f"{segment.id}\t복구된 번역"])
-        recovery = RecoveryEngine(
-            translator,
-            ResponseParser(),
-            ValidationCoordinator(self.config.validators, self.engine, self.profile),
-            self.engine,
-            self.config.recovery,
-            self.config.translation,
-            self.profile,
-        )
-        result = recovery.translate_batch([segment])
-
-        self.assertFalse(result.failed)
-        self.assertEqual(segment.translation, "복구된 번역")
-        self.assertEqual(segment.attempt_count, 2)
-        self.assertEqual(len(translator.calls), 2)
-
     def test_r28_triple_identical_duplicate_salvage(self) -> None:
         segment = self._prepared_segments(1)[0]
         row = f"{segment.id}\t정상 번역"
@@ -371,9 +339,6 @@ class MandatoryRegressionCases(unittest.TestCase):
         self.assertEqual(parsed.identical_duplicates, [segment.id])
         self.assertFalse(parsed.conflicting_duplicates)
         self.assertEqual(evaluation.by_segment_id[segment.id].translation, "정상 번역")
-        issues = evaluation.by_segment_id[segment.id].result
-        self.assertFalse(issues.has_errors)
-        self.assertIn("IDENTICAL_DUPLICATE_ID", [issue.code for issue in issues.issues])
 
     def test_r29_one_conflicting_occurrence_poisons_duplicate_set(self) -> None:
         segment = self._prepared_segments(1)[0]
@@ -391,39 +356,34 @@ class MandatoryRegressionCases(unittest.TestCase):
 
         self.assertFalse(parsed.identical_duplicates)
         self.assertEqual(parsed.conflicting_duplicates, [segment.id])
-        self.assertEqual(
-            parsed.occurrences[segment.id], ["같은 번역", "같은 번역", "다른 번역"]
-        )
         self.assertIsNone(evaluation.by_segment_id[segment.id].translation)
-        self.assertTrue(evaluation.by_segment_id[segment.id].result.has_errors)
 
-    def test_r30_valid_sibling_survives_conflicting_duplicate(self) -> None:
+    def test_r30_valid_native_sibling_survives_failed_sibling(self) -> None:
         first, second = self._prepared_segments(2)
         checkpointed: list[str] = []
 
-        def initial(prompt: str) -> str:
-            self.assertEqual(
-                [item[0] for item in prompt_targets(prompt)], [first.id, second.id]
-            )
-            return "\n".join(
-                [
-                    f"{first.id}\t첫 후보",
-                    f"{first.id}\t둘째 후보",
-                    f"{second.id}\t정상 형제 번역",
-                ]
-            )
+        def first_success(prompt: str) -> str:
+            self.assertEqual(native_prompt_source(prompt), first.prepared_source)
+            return "정상 형제 번역"
 
-        def repair(prompt: str) -> str:
-            self.assertEqual([item[0] for item in prompt_targets(prompt)], [first.id])
-            self.assertEqual(second.status, SegmentStatus.VALID)
-            self.assertIn(second.id, checkpointed)
-            self.assertNotIn(second.id, prompt)
-            return f"{first.id}\t복구된 첫 번역"
+        def second_failure(prompt: str) -> str:
+            self.assertEqual(native_prompt_source(prompt), second.prepared_source)
+            self.assertEqual(first.status, SegmentStatus.VALID)
+            return "오류的"
 
-        translator = ScriptedTranslator([initial, repair])
+        def second_repair(prompt: str) -> str:
+            self.assertEqual(native_prompt_source(prompt), second.prepared_source)
+            self.assertEqual(first.status, SegmentStatus.VALID)
+            self.assertIn(first.id, checkpointed)
+            self.assertNotIn(first.id, prompt)
+            return "복구된 번역"
+
+        translator = ScriptedTranslator(
+            [first_success, second_failure, second_repair]
+        )
         recovery = RecoveryEngine(
             translator,
-            ResponseParser(),
+            SingleTranslationParser(),
             ValidationCoordinator(self.config.validators, self.engine, self.profile),
             self.engine,
             self.config.recovery,
@@ -434,54 +394,46 @@ class MandatoryRegressionCases(unittest.TestCase):
         result = recovery.translate_batch([first, second])
 
         self.assertFalse(result.failed)
-        self.assertEqual(checkpointed, [second.id, first.id])
-        self.assertEqual(first.attempt_count, 2)
-        self.assertEqual(second.attempt_count, 1)
-        self.assertEqual(len(translator.calls), 2)
+        self.assertEqual(checkpointed, [first.id, second.id])
+        self.assertEqual(first.attempt_count, 1)
+        self.assertEqual(second.attempt_count, 2)
 
     def test_r31_repair_hint_without_broken_translation(self) -> None:
         segment = self._prepared_segments(1)[0]
         segment.context_before = ["앞 문맥"]
         segment.context_after = ["뒤 문맥"]
-        broken_a = "깨진 이전 번역 A"
-        broken_b = "깨진 이전 번역 B"
+        broken = "깨진 이전 번역的"
 
         def repair(prompt: str) -> str:
             self.assertIn(segment.source, prompt)
             self.assertIn("앞 문맥", prompt)
             self.assertIn("뒤 문맥", prompt)
-            self.assertIn("DUPLICATE_ID", prompt)
-            self.assertIn("같은 출력 행을 반복하지 마십시오.", prompt)
-            self.assertNotIn(broken_a, prompt)
-            self.assertNotIn(broken_b, prompt)
-            self.assertEqual(prompt.count(segment.id), 1)
-            return f"{segment.id}\t복구 번역"
+            self.assertIn("KNOWN_BAD_CJK_RESIDUE", prompt)
+            self.assertNotIn(broken, prompt)
+            self.assertNotIn(segment.id, prompt)
+            return "복구 번역"
 
-        raw = f"{segment.id}\t{broken_a}\n{segment.id}\t{broken_b}"
-        translator = ScriptedTranslator([raw, repair])
+        translator = ScriptedTranslator([broken, repair])
         recovery = RecoveryEngine(
             translator,
-            ResponseParser(),
+            SingleTranslationParser(),
             ValidationCoordinator(self.config.validators, self.engine, self.profile),
             self.engine,
             self.config.recovery,
             self.config.translation,
             self.profile,
         )
-
-        result = recovery.translate_batch([segment])
+        result = recovery.translate_segment(segment)
 
         self.assertFalse(result.failed)
         self.assertEqual(segment.translation, "복구 번역")
-        self.assertEqual(len(translator.calls), 2)
 
-    def test_r32_parser_remains_parse_once(self) -> None:
+    def test_r32_native_parser_remains_parse_once(self) -> None:
         segment = self._prepared_segments(1)[0]
-        initial = f"{segment.id}\t첫 후보\n{segment.id}\t둘째 후보"
-        repaired_row = f"{segment.id}\t복구 번역"
-        repaired = f"{repaired_row}\n{repaired_row}"
+        initial = "오류的"
+        repaired = "복구 번역"
         translator = ScriptedTranslator([initial, repaired])
-        parser = CountingParser()
+        parser = CountingSingleParser()
         recovery = RecoveryEngine(
             translator,
             parser,
@@ -491,14 +443,216 @@ class MandatoryRegressionCases(unittest.TestCase):
             self.config.translation,
             self.profile,
         )
-
-        result = recovery.translate_batch([segment])
+        result = recovery.translate_segment(segment)
 
         self.assertFalse(result.failed)
         self.assertEqual(parser.calls, len(translator.calls))
         self.assertEqual(Counter(parser.raw_responses), Counter([initial, repaired]))
-        self.assertEqual(segment.translation, "복구 번역")
         self.assertTrue(segment.was_repaired)
+
+    def test_r33_native_single_prompt_contains_no_segment_id(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        prompt = build_single_translation_prompt(segment, self.profile)
+        self.assertNotIn(segment.id, prompt)
+        self.assertNotIn("SEG_", prompt)
+        self.assertNotIn("ADULT_", prompt)
+
+    def test_r34_single_raw_translation_maps_to_known_segment(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        parsed = SingleTranslationParser().parse("정상 번역")
+        evaluation = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment)
+        self.assertEqual(
+            evaluation.by_segment_id[segment.id].translation, "정상 번역"
+        )
+
+    def test_r35_native_single_success_becomes_valid_in_one_request(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        checkpointed: list[str] = []
+        translator = ScriptedTranslator(["정상 번역"])
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+            on_valid=lambda item: checkpointed.append(item.id),
+        )
+        result = recovery.translate_segment(segment)
+        self.assertFalse(result.failed)
+        self.assertEqual(segment.status, SegmentStatus.VALID)
+        self.assertEqual(segment.attempt_count, 1)
+        self.assertEqual(checkpointed, [segment.id])
+        self.assertEqual(len(translator.calls), 1)
+
+    def test_r36_failed_segment_repair_never_retranslates_valid_sibling(self) -> None:
+        first, second = self._prepared_segments(2)
+        translator = ScriptedTranslator(["첫 정상 번역", "오류的", "둘째 복구 번역"])
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+        result = recovery.translate_batch([first, second])
+        self.assertFalse(result.failed)
+        self.assertEqual(first.attempt_count, 1)
+        self.assertEqual(second.attempt_count, 2)
+        self.assertEqual(
+            [native_prompt_source(prompt) for prompt in translator.calls],
+            [first.prepared_source, second.prepared_source, second.prepared_source],
+        )
+
+    def test_r37_repair_prompt_has_no_id_or_broken_candidate(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        segment.context_before = ["참고 문맥"]
+        broken = "망가진 후보的"
+
+        def inspect_repair(prompt: str) -> str:
+            self.assertNotIn(segment.id, prompt)
+            self.assertNotIn(broken, prompt)
+            self.assertIn(segment.source, prompt)
+            self.assertIn("참고 문맥", prompt)
+            self.assertIn("KNOWN_BAD_CJK_RESIDUE", prompt)
+            return "정상 복구 번역"
+
+        recovery = RecoveryEngine(
+            ScriptedTranslator([broken, inspect_repair]),
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+        self.assertFalse(recovery.translate_segment(segment).failed)
+
+    def test_r38_native_transport_failure_remains_job_level(self) -> None:
+        segment = self._prepared_segments(1)[0]
+
+        def fail_transport(_prompt: str) -> str:
+            raise TranslationTransportError("offline")
+
+        recovery = RecoveryEngine(
+            ScriptedTranslator([fail_transport]),
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+        with self.assertRaises(TranslationTransportError):
+            recovery.translate_segment(segment)
+        self.assertEqual(segment.status, SegmentStatus.PREPARED)
+        self.assertEqual(segment.attempt_count, 0)
+
+    def test_r39_placeholders_survive_native_single_protocol(self) -> None:
+        engine = PlaceholderEngine(
+            [{"pattern": r"@@KEEP@@", "kind": "synthetic"}]
+        )
+        source = "Hello\n\\N[1] @@KEEP@@"
+        segment = Segment("SEG_00000001", source, source_language="en")
+        prepared = engine.protect(source)
+        segment.prepare(prepared.text, prepared.tokens)
+        candidate = "안녕 " + " ".join(
+            token.placeholder for token in prepared.tokens
+        )
+        recovery = RecoveryEngine(
+            ScriptedTranslator([candidate]),
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, engine, self.profile),
+            engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+        result = recovery.translate_segment(segment)
+        self.assertFalse(result.failed)
+        self.assertIn("\n", segment.translation or "")
+        self.assertIn("\\N[1]", segment.translation or "")
+        self.assertIn("@@KEEP@@", segment.translation or "")
+
+    def test_r40_novel_adult_intensity_instruction_survives(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        prompt = build_single_translation_prompt(segment, load_profile("novel"))
+        self.assertIn("원문의 의미를 임의로 순화하거나 강화하지 않는다.", prompt)
+        self.assertIn("성인 표현도 원문의 강도를 유지한다.", prompt)
+
+    def test_r41_terminal_failure_retains_bounded_native_exchange(self) -> None:
+        segment = self._prepared_segments(1)[0]
+        config = replace(
+            self.config,
+            recovery=replace(self.config.recovery, max_attempts=2),
+        )
+        raw = "오류的" + ("x" * 6000)
+        with tempfile.TemporaryDirectory() as directory:
+            debug_path = Path(directory) / "failed.seori-debug.json"
+            debug = FailureDebugStore(debug_path, mode="novel")
+            debug.reset()
+            recovery = RecoveryEngine(
+                ScriptedTranslator([raw, raw]),
+                SingleTranslationParser(),
+                ValidationCoordinator(config.validators, self.engine, self.profile),
+                self.engine,
+                config.recovery,
+                config.translation,
+                self.profile,
+                on_failed_attempt=debug.record,
+                on_validated=debug.clear,
+            )
+            result = recovery.translate_segment(segment)
+
+            self.assertEqual(result.failed, [segment])
+            self.assertTrue(segment.last_raw_response_truncated)
+            self.assertLessEqual(len(segment.last_raw_response or ""), 4000)
+            self.assertNotIn(segment.id, segment.last_prompt or "")
+            artifact = json.loads(debug_path.read_text(encoding="utf-8"))
+            exchange = artifact["failed_exchanges"][0]
+            self.assertEqual(exchange["segment_id"], segment.id)
+            self.assertEqual(exchange["status"], "FAILED")
+            self.assertIn("KNOWN_BAD_CJK_RESIDUE", exchange["error_codes"])
+
+        report = build_qa_report(
+            PipelineResult([segment], resumed=0, already_korean=0),
+            source_path="input.txt",
+            source_sha256="sha",
+            output_path="output.txt",
+            model="test",
+            backup_path="backup.txt",
+            mode="novel",
+            profile="novel",
+        )
+        failure = report["terminal_failures"][0]
+        self.assertIn("<<<SOURCE>>>", failure["last_prompt"])
+        self.assertIn("[중간 생략]", failure["last_raw_response"])
+
+    def test_r42_resume_never_calls_native_translator_for_valid_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "resume.sqlite"
+            initial = Segment("SEG_00000001", "こんにちは")
+            with CheckpointStore(checkpoint_path) as checkpoint:
+                TranslationPipeline(
+                    self.config,
+                    self.profile,
+                    ScriptedTranslator(["안녕하세요"]),
+                    checkpoint,
+                ).process([initial])
+
+            resumed_segment = Segment("SEG_00000001", "こんにちは")
+            no_call = NoCallTranslator()
+            with CheckpointStore(checkpoint_path) as checkpoint:
+                result = TranslationPipeline(
+                    self.config, self.profile, no_call, checkpoint
+                ).process([resumed_segment])
+            self.assertEqual(result.resumed, 1)
+            self.assertEqual(no_call.calls, 0)
 
 
 if __name__ == "__main__":

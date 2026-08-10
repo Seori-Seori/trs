@@ -20,6 +20,14 @@ def prompt_targets(prompt: str) -> list[tuple[str, str, str]]:
     return targets
 
 
+def native_prompt_source(prompt: str) -> str:
+    start_marker = "<<<SOURCE>>>\n"
+    end_marker = "\n<<<END_SOURCE>>>"
+    if prompt.count(start_marker) != 1 or prompt.count(end_marker) != 1:
+        raise AssertionError("Native prompt must contain exactly one source block")
+    return prompt.split(start_marker, 1)[1].split(end_marker, 1)[0]
+
+
 class ScriptedTranslator(Translator):
     def __init__(self, responses: list[str | Callable[[str], str]]) -> None:
         self.responses = list(responses)

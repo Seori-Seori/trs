@@ -239,4 +239,7 @@ mock translator 호출 횟수를 검사하여 VALID + 동일 source hash Segment
 
 # 완료 조건
 
-v7.0을 "완성"으로 부르기 전에 최소 R01~R23이 자동 테스트로 존재하고 통과해야 한다.
+R01~R23은 초기 필수 회귀 집합이다. 이후 승인된 프로토콜 회귀는 Round별 문서에
+정의되며, 현재 구현은 `V7_0_ROUND4_HYMT_NATIVE_PROTOCOL.md`의 R33~R42를 포함해
+R01~R42가 자동 테스트로 존재하고 통과해야 한다. R26~R29의 row-ID 검사는 레거시
+parser 호환성에만 적용되며 기본 HY-MT native 경로의 wire contract가 아니다.

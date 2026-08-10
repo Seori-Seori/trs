@@ -89,3 +89,39 @@ class ResponseParser:
             code_fence_removed=code_fence_removed,
             blank_line_count=blank_line_count,
         )
+
+
+@dataclass(frozen=True)
+class SingleTranslationResponse:
+    translation: str
+    raw_response: str
+    code_fence_removed: bool = False
+
+
+class SingleTranslationParser:
+    """Interpret one native HY-MT response once as one known Segment candidate."""
+
+    def parse(self, raw_response: str) -> SingleTranslationResponse:
+        raw = raw_response.lstrip("\ufeff")
+        lines = raw.splitlines(keepends=True)
+        nonblank_indexes = [
+            index for index, line in enumerate(lines) if line.strip()
+        ]
+        code_fence_removed = False
+        candidate = raw
+
+        if len(nonblank_indexes) >= 2:
+            first = nonblank_indexes[0]
+            last = nonblank_indexes[-1]
+            if (
+                _FENCE_RE.fullmatch(lines[first].strip())
+                and lines[last].strip() == "```"
+            ):
+                candidate = "".join(lines[first + 1:last])
+                code_fence_removed = True
+
+        return SingleTranslationResponse(
+            translation=candidate.strip(),
+            raw_response=raw_response,
+            code_fence_removed=code_fence_removed,
+        )

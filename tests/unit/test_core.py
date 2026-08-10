@@ -11,11 +11,10 @@ from adapters.text import TextAdapter
 from core.batching import safe_split_with_separators
 from core.checkpoint import CheckpointStore
 from core.config import ConfigError, load_config, load_profile
-from core.parser import ResponseParser
 from core.pipeline import TranslationPipeline
 from core.placeholders import PlaceholderEngine
 from core.segment import Segment, SegmentStatus, ValidationResult
-from tests.helpers import ScriptedTranslator, prompt_targets
+from tests.helpers import ScriptedTranslator, native_prompt_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -129,14 +128,11 @@ class EndToEndMockTests(unittest.TestCase):
         profile = load_profile("novel")
 
         def translate(prompt: str) -> str:
-            rows = []
-            for segment_id, _language, source in prompt_targets(prompt):
-                mapping = {
-                    "こんにちは": "안녕하세요",
-                    "Next [[PH_0001]]": "다음 [[PH_0001]]",
-                }
-                rows.append(f"{segment_id}\t{mapping[source]}")
-            return "\n".join(rows)
+            mapping = {
+                "こんにちは": "안녕하세요",
+                "Next [[PH_0001]]": "다음 [[PH_0001]]",
+            }
+            return mapping[native_prompt_source(prompt)]
 
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "novel.txt"
@@ -144,13 +140,16 @@ class EndToEndMockTests(unittest.TestCase):
             adapter = TextAdapter()
             document, segments = adapter.load(input_path)
             checkpoint_path = Path(directory) / "novel.seori.sqlite"
-            translator = ScriptedTranslator([translate])
+            translator = ScriptedTranslator([translate, translate])
             with CheckpointStore(checkpoint_path) as checkpoint:
                 result = TranslationPipeline(
                     config, profile, translator, checkpoint
                 ).process(segments)
             self.assertFalse(result.failed)
-            self.assertEqual(len(translator.calls), 1)
+            self.assertEqual(len(translator.calls), 2)
+            self.assertTrue(
+                all("SEG_" not in prompt for prompt in translator.calls)
+            )
             output_path = Path(directory) / "novel.ko.txt"
             adapter.save(document, segments, output_path)
             self.assertEqual(output_path.read_text(encoding="utf-8"), "안녕하세요\n\n다음 %PLAYER%")
@@ -175,14 +174,12 @@ class EndToEndMockTests(unittest.TestCase):
         profile = load_profile("novel")
 
         def translate(prompt: str) -> str:
-            return "\n".join(
-                f"{segment_id}\t번역"
-                for segment_id, _language, _source in prompt_targets(prompt)
-            )
+            self.assertTrue(native_prompt_source(prompt))
+            return "번역"
 
         source = "これは最初の長い文です。これは二番目の長い文です。これは最後です。"
         segment = Segment("SEG_00000001", source)
-        translator = ScriptedTranslator([translate, translate, translate, translate])
+        translator = ScriptedTranslator([translate] * 10)
         result = TranslationPipeline(config, profile, translator).process([segment])
         self.assertFalse(result.failed)
         self.assertIn("번역", segment.translation or "")
@@ -193,8 +190,8 @@ class EndToEndMockTests(unittest.TestCase):
         profile = load_profile("novel")
 
         def good_translation(prompt: str) -> str:
-            segment_id, _language, _source = prompt_targets(prompt)[0]
-            return f"{segment_id}\t안녕 [[PH_0001]]"
+            self.assertEqual(native_prompt_source(prompt), "Hello [[PH_0001]]")
+            return "안녕 [[PH_0001]]"
 
         with tempfile.TemporaryDirectory() as directory:
             checkpoint_path = Path(directory) / "resume.sqlite"
@@ -223,6 +220,40 @@ class EndToEndMockTests(unittest.TestCase):
             self.assertEqual(result.resumed, 0)
             self.assertEqual(len(translator.calls), 1)
             self.assertEqual(second.translation, "안녕 %PLAYER%")
+
+    def test_partial_completion_checkpoint_survives_interrupt(self) -> None:
+        config = load_config(ROOT / "config.json")
+        profile = load_profile("novel")
+
+        def interrupt(_prompt: str) -> str:
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "resume.sqlite"
+            first_run = [
+                Segment("SEG_00000001", "こんにちは"),
+                Segment("SEG_00000002", "世界"),
+            ]
+            translator = ScriptedTranslator(["안녕하세요", interrupt])
+            with CheckpointStore(checkpoint_path) as checkpoint:
+                with self.assertRaises(KeyboardInterrupt):
+                    TranslationPipeline(
+                        config, profile, translator, checkpoint
+                    ).process(first_run)
+                self.assertEqual(checkpoint.valid_count(), 1)
+
+            resumed_segments = [
+                Segment("SEG_00000001", "こんにちは"),
+                Segment("SEG_00000002", "世界"),
+            ]
+            resumed_translator = ScriptedTranslator(["세계"])
+            with CheckpointStore(checkpoint_path) as checkpoint:
+                resumed = TranslationPipeline(
+                    config, profile, resumed_translator, checkpoint
+                ).process(resumed_segments)
+            self.assertEqual(resumed.resumed, 1)
+            self.assertEqual(len(resumed_translator.calls), 1)
+            self.assertNotIn("SEG_00000001", resumed_translator.calls[0])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,10 @@
 4. `docs/V7_0_IMPLEMENTATION.md`
 5. `docs/REGRESSION_CASES.md`
 6. `docs/V6_MIGRATION.md`
+7. `docs/V7_0_ROUND4_HYMT_NATIVE_PROTOCOL.md`
+
+Round별 승인 문서는 초기 설계를 보정한다. 현재 기본 HY-MT wire protocol은 Round 4의
+ID 없는 단일 Segment native 요청이며, 이전 문서의 row-ID batching 설명보다 우선한다.
 
 ## 구현 목표
 

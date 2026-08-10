@@ -24,12 +24,12 @@ TXT
  -> language detection
  -> placeholder protection
  -> context build
- -> batching
- -> Ollama translation
+ -> HY-MT native single-Segment request (internal ID is not exposed)
+ -> Ollama translation text
  -> parse once
  -> validators
  -> partial repair only for failed segments
- -> split fallback
+ -> safe split only for long segments
  -> checkpoint
  -> TextAdapter reconstruction
  -> Korean TXT
@@ -138,9 +138,12 @@ backup/novel.*.txt    실행 전 원본 백업
 --mode novel|game|document
 --profile NAME|PATH
 --resume / --no-resume
+--debug-failures
 ```
 
 `--profile`은 선택한 모드의 기본 프로필을 바꾸는 고급 옵션이다.
+`--debug-failures`는 실패한 단일 요청의 bounded source/prompt/원시 응답과 최종
+오류 코드를 `<입력명>.seori-debug.json`에 기록한다. 성공 응답은 기록하지 않는다.
 
 입력은 UTF-8 또는 UTF-8 BOM TXT만 지원한다. CP949/Shift-JIS를 임의 추측하지
 않으며 원본 TXT와 같은 경로로 출력하는 것도 거부한다.
@@ -150,11 +153,12 @@ backup/novel.*.txt    실행 전 원본 백업
 - 시작 전에 Ollama 연결과 모델 설치 여부를 검사하고 실패하면 즉시 중단한다.
 - HTTP/연결/timeout/응답 envelope 오류는 작업 수준 오류이며 Segment repair/split을 하지 않는다.
 - `translation.max_prompt_chars`는 문맥과 지시문까지 포함한 실제 프롬프트 크기를 제한한다.
+- 기본 HY-MT 요청은 한 번에 Segment 하나만 보내며 프로그램 내부 ID를 prompt/응답 규약에 노출하지 않는다.
 - 모델 응답마다 parser는 정확히 한 번만 실행된다.
-- 한 모델 응답에서 검증을 통과한 Segment들은 한 SQLite transaction으로 저장된다.
-- 실패한 Segment만 partial repair 대상으로 다시 요청한다.
+- 검증을 통과한 Segment는 즉시 SQLite checkpoint에 저장된다.
+- 실패한 Segment만 source·context·오류 코드로 단건 partial repair 요청을 보낸다.
 - repair 프롬프트에는 원문·문맥·검증 실패 코드만 포함하며 깨진 번역을 기준으로 삼지 않는다.
-- partial repair가 실패하면 실패 집합을 분할하고 마지막에는 한 문단씩 재시도한다.
+- 일반 Segment는 설정된 단건 재시도 횟수를 소진하면 FAILED가 되며, 긴 Segment만 안전한 자식 조각으로 분할한다.
 - placeholder 값·개수·순서가 틀리면 원래 위치를 추정하지 않고 실패 처리한다.
 - 동일 ID와 동일 source SHA-256의 `VALID` checkpoint는 재검증 후 모델 호출 없이 재사용한다.
 - checkpoint의 source SHA-256이 현재 TXT와 다르면 resume을 거부하고 `--no-resume`을 안내한다.
@@ -171,6 +175,7 @@ Ollama 모델 없이도 parser, validator, checkpoint, partial repair와 split�
 python -m unittest discover -s tests -v
 ```
 
-`tests/regression/test_regression_cases.py`에는 `R01`부터 `R23`까지 각각의 회귀
-테스트가 존재한다. 통합 테스트는 로컬 임시 HTTP 서버로 Ollama API 계약을 재현하여
+`tests/regression/test_regression_cases.py`에는 레거시 parser 호환 회귀를 포함해
+`R01`부터 Round 4 네이티브 프로토콜의 `R42`까지 각각의 회귀 테스트가 존재한다.
+통합 테스트는 로컬 임시 HTTP 서버로 Ollama API 계약을 재현하여
 `main.py input.txt`부터 백업, 한국어 TXT, SQLite, QA JSON 생성까지 검증한다.

@@ -124,6 +124,9 @@ class Segment:
     raw_translation: str | None = None
     last_raw_response: str | None = None
     last_raw_response_truncated: bool = False
+    last_prompt: str | None = None
+    last_prompt_truncated: bool = False
+    last_request_mode: str | None = None
     translation: str | None = None
     status: SegmentStatus = SegmentStatus.PENDING
     attempt_count: int = 0
@@ -171,20 +174,36 @@ class Segment:
         self.transition(SegmentStatus.PARSED)
 
     def record_raw_response(self, raw_response: str, *, limit: int = 4000) -> None:
+        value, truncated = self._bounded_text(raw_response, limit=limit)
+        self.last_raw_response = value
+        self.last_raw_response_truncated = truncated
+
+    def record_prompt(
+        self,
+        prompt: str,
+        *,
+        mode: str,
+        limit: int = 8000,
+    ) -> None:
+        value, truncated = self._bounded_text(prompt, limit=limit)
+        self.last_prompt = value
+        self.last_prompt_truncated = truncated
+        self.last_request_mode = mode
+
+    @staticmethod
+    def _bounded_text(value: str, *, limit: int) -> tuple[str, bool]:
         if limit <= 0:
-            raise ValueError("Raw response limit must be positive")
-        if len(raw_response) <= limit:
-            self.last_raw_response = raw_response
-            self.last_raw_response_truncated = False
-            return
+            raise ValueError("Diagnostic text limit must be positive")
+        if len(value) <= limit:
+            return value, False
         marker = "\n... [중간 생략] ...\n"
         remaining = max(0, limit - len(marker))
         head = (remaining * 3) // 4
         tail = remaining - head
-        self.last_raw_response = (
-            raw_response[:head] + marker + (raw_response[-tail:] if tail else "")
+        bounded = (
+            value[:head] + marker + (value[-tail:] if tail else "")
         )
-        self.last_raw_response_truncated = True
+        return bounded, True
 
     def mark_for_repair(self, result: ValidationResult, error: str | None = None) -> None:
         self.validation_issues = list(result.issues)

@@ -10,16 +10,16 @@ from unittest.mock import patch
 
 from core.checkpoint import CheckpointStore
 from core.config import load_config, load_profile
-from core.parser import ResponseParser
+from core.parser import ResponseParser, SingleTranslationParser
 from core.pipeline import PipelineResult
 from core.placeholders import PlaceholderEngine
-from core.prompting import build_prompt
+from core.prompting import build_single_translation_prompt
 from core.recovery import RecoveryEngine
 from core.reporting import build_qa_report
 from core.segment import Segment, SegmentStatus, ValidationResult, ValidationSeverity
 from core.validation import ValidationCoordinator
 from main import run
-from tests.helpers import ScriptedTranslator, prompt_targets
+from tests.helpers import ScriptedTranslator, native_prompt_source
 from translators.base import Translator, TranslationTransportError
 from translators.ollama import OllamaTranslator
 from validators.risk import validate_risks
@@ -79,10 +79,9 @@ class _EchoTranslator(Translator):
 
     def translate(self, prompt: str) -> str:
         self.calls.append(prompt)
-        return "\n".join(
-            f"{segment_id}\t정상 번역"
-            for segment_id, _language, _source in prompt_targets(prompt)
-        )
+        if not native_prompt_source(prompt):
+            raise AssertionError("Native prompt source is empty")
+        return "정상 번역"
 
 
 class Round2HardeningTests(unittest.TestCase):
@@ -116,7 +115,7 @@ class Round2HardeningTests(unittest.TestCase):
         selected_profile = profile or self.novel
         return RecoveryEngine(
             translator,
-            ResponseParser(),
+            SingleTranslationParser(),
             ValidationCoordinator(
                 selected_config.validators, engine, selected_profile
             ),
@@ -181,13 +180,13 @@ class Round2HardeningTests(unittest.TestCase):
         self.assertEqual([segment.attempt_count for segment in segments], [0, 0])
         self.assertTrue(all(not segment.validation_issues for segment in segments))
 
-    def test_actual_prompt_budget_splits_group_before_send(self) -> None:
+    def test_actual_native_prompt_budget_is_checked_before_send(self) -> None:
         engine, segments = self._prepared_segments(3)
         for segment in segments:
             segment.context_before = ["前の文脈" * 40]
             segment.context_after = ["後の文脈" * 40]
         single_sizes = [
-            len(build_prompt([segment], self.novel, mode="batch"))
+            len(build_single_translation_prompt(segment, self.novel))
             for segment in segments
         ]
         limit = max(single_sizes) + 5
@@ -204,10 +203,11 @@ class Round2HardeningTests(unittest.TestCase):
             translator, engine, config=config
         ).translate_batch(segments)
         self.assertFalse(result.failed)
-        self.assertGreater(len(translator.calls), 1)
+        self.assertEqual(len(translator.calls), 3)
         self.assertTrue(all(len(prompt) <= limit for prompt in translator.calls))
         self.assertEqual(
-            sum(len(prompt_targets(prompt)) for prompt in translator.calls), 3
+            [native_prompt_source(prompt) for prompt in translator.calls],
+            [segment.prepared_source for segment in segments],
         )
 
     def test_unquoted_windows_path_stops_at_whitespace(self) -> None:
@@ -262,10 +262,11 @@ class Round2HardeningTests(unittest.TestCase):
             self.assertIn("MISSING_PLACEHOLDER", prompt)
             self.assertIn("모든 보호 토큰", prompt)
             self.assertNotIn("안녕하세요", prompt)
+            self.assertNotIn(segment.id, prompt)
             marker = segment.protected_tokens[0].placeholder
-            return f"{segment.id}\t안녕 {marker}"
+            return f"안녕 {marker}"
 
-        translator = ScriptedTranslator([f"{segment.id}\t안녕하세요", repair])
+        translator = ScriptedTranslator(["안녕하세요", repair])
         result = self._recovery(translator, engine).translate_batch([segment])
         self.assertFalse(result.failed)
         self.assertEqual(segment.translation, "안녕 %PLAYER%")
@@ -279,9 +280,10 @@ class Round2HardeningTests(unittest.TestCase):
             self.assertIn("KNOWN_BAD_CJK_RESIDUE", prompt)
             self.assertIn("한국어만 출력", prompt)
             self.assertNotIn("오류的", prompt)
-            return f"{segment.id}\t정상 번역"
+            self.assertNotIn(segment.id, prompt)
+            return "정상 번역"
 
-        translator = ScriptedTranslator([f"{segment.id}\t오류的", repair])
+        translator = ScriptedTranslator(["오류的", repair])
         result = self._recovery(translator, engine).translate_batch([segment])
         self.assertFalse(result.failed)
         self.assertEqual(len(translator.calls), 2)
@@ -414,13 +416,15 @@ class Round2HardeningTests(unittest.TestCase):
             self.config,
             recovery=replace(self.config.recovery, max_attempts=2),
         )
-        raw = f"{segment.id}\t오류的" + ("x" * 6000)
+        raw = "오류的" + ("x" * 6000)
         translator = ScriptedTranslator([raw, raw])
         recovery = self._recovery(translator, engine, config=config)
         result = recovery.translate_batch([segment])
         self.assertEqual(result.failed, [segment])
         self.assertTrue(segment.last_raw_response_truncated)
         self.assertLessEqual(len(segment.last_raw_response or ""), 4000)
+        self.assertIsNotNone(segment.last_prompt)
+        self.assertNotIn(segment.id, segment.last_prompt or "")
 
         report = build_qa_report(
             PipelineResult([segment], resumed=0, already_korean=0),
@@ -436,6 +440,7 @@ class Round2HardeningTests(unittest.TestCase):
         self.assertIn("KNOWN_BAD_CJK_RESIDUE", failure["failure_codes"])
         self.assertTrue(failure["last_raw_response_truncated"])
         self.assertIn("[중간 생략]", failure["last_raw_response"])
+        self.assertIn("<<<SOURCE>>>", failure["last_prompt"])
 
 
 if __name__ == "__main__":
