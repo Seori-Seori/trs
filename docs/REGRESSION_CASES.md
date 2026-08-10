@@ -237,6 +237,77 @@ mock translator 호출 횟수를 검사하여 VALID + 동일 source hash Segment
 
 10개 중 2개 ERROR 시 mock translator에 repair 대상으로 정확히 2개만 전달되는지 확인한다.
 
+# Round 6 일반화 재설계 회귀
+
+## R67 - 기본 prompt 최소화
+
+일반 번역 요청에 용어집, register 목록, 후보 번역, 금지어, 작품별 이름이 포함되지 않는다.
+
+## R68 - 작품별 기본 이름 제거
+
+shipped profile에 특정 작품 이름 매핑이 없으며 비어 있지 않은 legacy `name_map`은 거부한다.
+
+## R69 - dictionary dump 금지
+
+Class B language pack의 항목이 source 등장 여부와 무관하게 prompt에 노출되지 않는다.
+
+## R70 - mapped name round trip
+
+명시적 이름 매핑은 `[[NAME_0001]]`로 보호되고 정확한 목표 이름으로 복원된다.
+
+## R71 - mapped placeholder 무결성
+
+누락, 중복, unexpected placeholder, 순서 변경은 모두 ERROR이며 위치를 추정 복원하지 않는다.
+
+## R72 - 작업별 mapping 격리
+
+같은 source 이름이라도 서로 다른 작업은 서로 다른 목표 이름으로 매핑할 수 있다.
+
+## R73 - mapping 부재 시 자동 정규화 금지
+
+명시적 mapping이 없으면 고유명사를 발견하거나 canonicalize하지 않는다.
+
+## R74 - Class B validator-side only
+
+고신뢰 의미 범주 충돌은 validator가 source-anchored ERROR로 잡되 해당 규칙은 prompt에 없다.
+
+## R75 - Class C 전역 치환 금지
+
+문맥 의존 비속어·은유는 결정적 replacement나 전역 hard ERROR가 아니다.
+
+## R76 - 짧은 범용 성인소설 정책
+
+novel profile은 작품별 지식 없이 장르 강도와 자연스러운 한국어를 지시하는 짧은 정책만 쓴다.
+
+## R77 - 의료 문맥의 임상 표현 허용
+
+의료 문맥에서는 임상 용어가 novel register RISK를 잘못 발생시키지 않는다.
+
+## R78 - bounded repair prompt
+
+repair에는 source, context, 오류 코드와 최대 3개의 짧은 의미 범주만 들어가며 깨진 번역,
+후보 사전, 금지어 목록, 내부 Segment ID는 들어가지 않는다.
+
+## R79 - terminal failure source fallback
+
+bounded repair가 끝까지 실패하면 출력에는 immutable source를 남기고 QA에 terminal failure를 기록한다.
+
+## R80 - mapped checkpoint/resume
+
+동일 source와 저장된 mapping의 VALID checkpoint는 모델 호출 없이 재사용한다. 다른 mapping으로
+resume하면 거부한다.
+
+## R81 - game mapping 격리
+
+game 모드에서도 명시적 mapping은 작동하지만 novel register 정책이 prompt에 새지 않는다.
+
+## R82 - document 정책 격리
+
+document 모드 prompt에는 novel register 정책과 작품별 지식이 없다.
+
 # 완료 조건
 
-v7.0을 "완성"으로 부르기 전에 최소 R01~R23이 자동 테스트로 존재하고 통과해야 한다.
+R01~R23은 초기 필수 회귀 집합이다. 이후 승인된 프로토콜 회귀는 Round별 문서에
+정의되며, 현재 구현은 `V7_0_ROUND6_GENERALIZATION_RESET.md`의 R67~R82를 포함해
+R01~R82가 자동 테스트로 존재하고 통과해야 한다. R26~R29의 row-ID 검사는 레거시
+parser 호환성에만 적용되며 기본 HY-MT native 경로의 wire contract가 아니다.

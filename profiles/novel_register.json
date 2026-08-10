@@ -1,0 +1,92 @@
+{
+  "version": 2,
+  "medical_context_terms": [
+    "医生",
+    "醫生",
+    "医师",
+    "醫師",
+    "患者",
+    "临床",
+    "臨床",
+    "医学",
+    "醫學",
+    "解剖",
+    "诊断",
+    "診斷",
+    "手术",
+    "手術",
+    "治疗",
+    "治療",
+    "病理",
+    "妇科",
+    "婦科",
+    "生殖系统",
+    "生殖系統"
+  ],
+  "entries": [
+    {
+      "source_terms": ["奶子", "咪咪", "酥胸", "双乳", "雙乳", "胸脯"],
+      "language": "zh",
+      "meaning_class": "breast_colloquial_or_erotic",
+      "source_register": "erotic_colloquial",
+      "preferred_register": "natural_korean_genre_fiction",
+      "avoid_korean": ["유방", "유선", "흉부"]
+    },
+    {
+      "source_terms": ["奶头", "奶頭"],
+      "language": "zh",
+      "meaning_class": "nipple_colloquial",
+      "source_register": "erotic_colloquial",
+      "preferred_register": "natural_korean_genre_fiction",
+      "avoid_korean": ["유두"]
+    },
+    {
+      "source_terms": ["大腿", "腿根"],
+      "language": "zh",
+      "meaning_class": "thigh_everyday",
+      "source_register": "neutral_or_erotic_everyday",
+      "preferred_register": "ordinary_korean_fiction",
+      "avoid_korean": ["대퇴부", "대퇴", "서혜부"]
+    },
+    {
+      "source_terms": ["小穴", "花壶", "花壺"],
+      "language": "zh",
+      "meaning_class": "context_dependent_genital_euphemism",
+      "source_register": "playful_euphemism",
+      "preferred_register": "contextual_korean_fiction",
+      "avoid_korean": ["여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관", "질강"]
+    },
+    {
+      "source_terms": ["骚屄", "騷屄", "肉洞"],
+      "language": "zh",
+      "meaning_class": "female_genital_vulgar",
+      "source_register": "vulgar_explicit",
+      "preferred_register": "comparable_korean_vulgar_fiction",
+      "avoid_korean": ["음부", "여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관"]
+    },
+    {
+      "source_terms": ["阴户", "陰戶", "穴口"],
+      "language": "zh",
+      "meaning_class": "female_genital_reference",
+      "source_register": "erotic_colloquial",
+      "preferred_register": "natural_korean_erotic_fiction",
+      "avoid_korean": ["여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관"]
+    },
+    {
+      "source_terms": ["自慰棒"],
+      "language": "zh",
+      "meaning_class": "sex_toy",
+      "source_register": "erotic_everyday",
+      "preferred_register": "natural_korean_erotic_fiction",
+      "avoid_korean": ["자위봉"]
+    },
+    {
+      "source_terms": ["本小姐", "本姑娘", "本少女"],
+      "language": "zh",
+      "meaning_class": "playful_self_reference",
+      "source_register": "playful_first_person",
+      "preferred_register": "natural_korean_internal_monologue",
+      "avoid_korean": ["본 아가씨", "이 아가씨", "본 소녀"]
+    }
+  ]
+}

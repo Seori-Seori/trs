@@ -1,0 +1,25 @@
+{
+  "name": "game",
+  "style": "precise_functional_game_korean",
+  "target_language": "ko",
+  "context_before": 2,
+  "context_after": 2,
+  "instructions": [
+    "게임 UI·대사·시스템 문구의 기능적 의미를 정확하고 간결하게 번역한다.",
+    "Yes/No, Skip/Don't Skip, 방향, 상태, 수치의 의미를 절대로 반전하지 않는다.",
+    "placeholder와 제어 코드는 원래 값·개수·순서를 정확히 유지한다.",
+    "짧은 메뉴 문구를 문학적으로 늘이거나 설명을 덧붙이지 않는다.",
+    "동일한 원어 용어는 문맥이 같으면 일관되게 번역한다.",
+    "문맥은 판단에만 사용하며 현재 target 이외의 문장을 출력하지 않는다."
+  ],
+  "semantic_risk": {
+    "enabled": true,
+    "automatic_ai_review": false
+  },
+  "validation": {
+    "number_mismatch_severity": "ERROR",
+    "negation_flip_severity": "ERROR",
+    "concept_flip_severity": "ERROR",
+    "partial_delimiter_loss_severity": "ERROR"
+  }
+}

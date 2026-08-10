@@ -12,10 +12,13 @@
     "enabled": true,
     "automatic_ai_review": false
   },
+  "cjk_residue_whitelist": [],
   "validation": {
     "number_mismatch_severity": "RISK",
     "negation_flip_severity": "RISK",
     "concept_flip_severity": "RISK",
-    "partial_delimiter_loss_severity": "RISK"
+    "partial_delimiter_loss_severity": "RISK",
+    "parenthetical_content_loss_severity": "ERROR",
+    "truncated_output_severity": "ERROR"
   }
 }
