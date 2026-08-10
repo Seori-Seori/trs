@@ -14,7 +14,8 @@
 
 ## v7.0 범위
 
-v7.0은 TXT 소설 번역을 완성하는 최소 핵심 엔진이다.
+v7.0은 TXT 번역을 완성하는 최소 핵심 엔진이다. 파일 형식과 번역 목적은 분리되어
+있으며 같은 TXT를 `novel`, `game`, `document` 모드로 번역할 수 있다.
 
 ```text
 TXT
@@ -55,13 +56,13 @@ TXT
 가장 먼저 완성해야 할 형태는 단순하다.
 
 ```bat
-run_translation.bat novel.txt
+run_translation.bat novel.txt --mode novel
 ```
 
 또는
 
 ```bash
-python main.py novel.txt
+python main.py novel.txt --mode novel
 ```
 
 결과 예:
@@ -78,7 +79,7 @@ backup/novel.<timestamp>.txt
 
 ## 개발 순서
 
-- v7.0: Python core + TXT + Ollama + validators + checkpoint + partial repair
+- v7.0: Python core + TXT + novel/game/document 모드 + Ollama + validators + checkpoint + partial repair
 - v7.1: glossary + character memory + story memory + translation memory
 - v7.2: HTML + Pixiv 저장 페이지
 - v7.3: RPG Maker adapter
@@ -100,14 +101,24 @@ backup/novel.<timestamp>.txt
 
 ```bash
 ollama pull huihui_ai/hy-mt1.5-abliterated:7b
-python main.py novel.txt
+python main.py novel.txt --mode novel
 ```
 
 Windows에서는 다음 BAT도 사용할 수 있다.
 
 ```bat
-run_translation.bat novel.txt
+run_translation.bat novel.txt --mode novel
 ```
+
+게임 문자열과 일반 문서는 각각 다음처럼 실행한다.
+
+```bash
+python main.py strings.txt --mode game
+python main.py manual.txt --mode document
+```
+
+대화형 터미널에서 `--mode`를 생략하면 소설/게임/일반 문서 선택 메뉴가 표시된다.
+비대화형 실행에서는 자동 추측하지 않고 호환성을 위해 `novel`을 결정적으로 사용한다.
 
 기본 생성 파일:
 
@@ -124,23 +135,32 @@ backup/novel.*.txt    실행 전 원본 백업
 --config PATH
 --model MODEL
 --output PATH
---profile novel|PATH
+--mode novel|game|document
+--profile NAME|PATH
 --resume / --no-resume
 ```
+
+`--profile`은 선택한 모드의 기본 프로필을 바꾸는 고급 옵션이다.
 
 입력은 UTF-8 또는 UTF-8 BOM TXT만 지원한다. CP949/Shift-JIS를 임의 추측하지
 않으며 원본 TXT와 같은 경로로 출력하는 것도 거부한다.
 
 ## 안전 복구 동작
 
+- 시작 전에 Ollama 연결과 모델 설치 여부를 검사하고 실패하면 즉시 중단한다.
+- HTTP/연결/timeout/응답 envelope 오류는 작업 수준 오류이며 Segment repair/split을 하지 않는다.
+- `translation.max_prompt_chars`는 문맥과 지시문까지 포함한 실제 프롬프트 크기를 제한한다.
 - 모델 응답마다 parser는 정확히 한 번만 실행된다.
-- 한 배치에서 검증을 통과한 Segment는 즉시 SQLite에 저장된다.
+- 한 모델 응답에서 검증을 통과한 Segment들은 한 SQLite transaction으로 저장된다.
 - 실패한 Segment만 partial repair 대상으로 다시 요청한다.
+- repair 프롬프트에는 원문·문맥·검증 실패 코드만 포함하며 깨진 번역을 기준으로 삼지 않는다.
 - partial repair가 실패하면 실패 집합을 분할하고 마지막에는 한 문단씩 재시도한다.
 - placeholder 값·개수·순서가 틀리면 원래 위치를 추정하지 않고 실패 처리한다.
 - 동일 ID와 동일 source SHA-256의 `VALID` checkpoint는 재검증 후 모델 호출 없이 재사용한다.
+- checkpoint의 source SHA-256이 현재 TXT와 다르면 resume을 거부하고 `--no-resume`을 안내한다.
 - 번역 도중 원본 TXT가 바뀌면 SHA-256 안전장치가 결과 재삽입을 거부한다.
-- 끝까지 실패한 문단만 QA의 `terminal_failures`에 기록하며 결과 TXT에는 해당 원문을 안전하게 유지한다.
+- 동일 작업의 일반 resume은 검증된 기존 backup을 재사용한다.
+- 끝까지 실패한 문단만 QA의 `terminal_failures`에 실패 코드와 제한된 마지막 원시 응답을 기록하며 결과 TXT에는 해당 원문을 안전하게 유지한다.
 
 ## 테스트
 

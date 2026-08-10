@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from core.config import ValidatorsConfig
 from core.parser import ParsedResponse
@@ -25,9 +26,15 @@ class ResponseEvaluation:
 
 
 class ValidationCoordinator:
-    def __init__(self, config: ValidatorsConfig, placeholder_engine: PlaceholderEngine) -> None:
+    def __init__(
+        self,
+        config: ValidatorsConfig,
+        placeholder_engine: PlaceholderEngine,
+        profile: dict[str, Any] | None = None,
+    ) -> None:
         self.config = config
         self.placeholder_engine = placeholder_engine
+        self.policy = dict((profile or {}).get("validation", {}))
 
     def evaluate_response(
         self, parsed: ParsedResponse, expected: list[Segment]
@@ -56,7 +63,9 @@ class ValidationCoordinator:
                     )
                     result.extend(placeholder_result)
             if candidate is not None and not result.has_errors:
-                result.extend(validate_text_structure(segment.source, candidate))
+                result.extend(
+                    validate_text_structure(segment.source, candidate, self.policy)
+                )
                 result.extend(
                     validate_korean(
                         segment.source,
@@ -65,7 +74,11 @@ class ValidationCoordinator:
                         self.config,
                     )
                 )
-                result.extend(validate_risks(segment.source, candidate, self.config))
+                result.extend(
+                    validate_risks(
+                        segment.source, candidate, self.config, self.policy
+                    )
+                )
             evaluations[segment.id] = SegmentEvaluation(
                 result=result,
                 translation=candidate if not result.has_errors else None,
@@ -82,7 +95,7 @@ class ValidationCoordinator:
         )
         result = validate_structure(synthetic, [segment], self.config).by_segment_id[segment.id]
         result.extend(validate_restored_tokens(translation, segment.protected_tokens))
-        result.extend(validate_text_structure(segment.source, translation))
+        result.extend(validate_text_structure(segment.source, translation, self.policy))
         result.extend(
             validate_korean(
                 segment.source,
@@ -91,5 +104,7 @@ class ValidationCoordinator:
                 self.config,
             )
         )
-        result.extend(validate_risks(segment.source, translation, self.config))
+        result.extend(
+            validate_risks(segment.source, translation, self.config, self.policy)
+        )
         return result

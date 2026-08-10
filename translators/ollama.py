@@ -37,33 +37,36 @@ class OllamaTranslator(Translator):
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise TranslationTransportError(
-                f"Ollama HTTP {exc.code} at {endpoint}: {detail[:500]}"
+                f"Ollama HTTP 오류 {exc.code} ({endpoint}): {detail[:500]}"
             ) from exc
         except urllib.error.URLError as exc:
             raise TranslationTransportError(
-                f"Cannot connect to Ollama at {self.base_url}: {exc.reason}"
+                f"Ollama에 연결할 수 없습니다: {self.base_url} ({exc.reason})"
             ) from exc
         except TimeoutError as exc:
             raise TranslationTransportError(
-                f"Ollama request timed out after {self.timeout_seconds} seconds"
+                f"Ollama 요청 시간이 {self.timeout_seconds}초를 초과했습니다"
+            ) from exc
+        except OSError as exc:
+            raise TranslationTransportError(
+                f"Ollama 전송 중 연결 오류가 발생했습니다: {exc}"
             ) from exc
 
         try:
             decoded = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise TranslationTransportError("Ollama returned invalid JSON") from exc
+            raise TranslationTransportError("Ollama가 올바른 JSON을 반환하지 않았습니다") from exc
         if not isinstance(decoded, dict):
-            raise TranslationTransportError("Ollama returned a non-object JSON response")
+            raise TranslationTransportError("Ollama JSON 응답이 객체 형식이 아닙니다")
         return decoded
 
     def health_check(self) -> bool:
-        try:
-            response = self._request("/api/tags", method="GET")
-        except TranslationTransportError:
-            return False
-        models = response.get("models", [])
+        response = self._request("/api/tags", method="GET")
+        models = response.get("models")
         if not isinstance(models, list):
-            return False
+            raise TranslationTransportError(
+                "Ollama /api/tags 응답에 models 배열이 없습니다"
+            )
         return any(
             isinstance(item, dict)
             and (item.get("name") == self.model or item.get("model") == self.model)
@@ -90,6 +93,8 @@ class OllamaTranslator(Translator):
         if not isinstance(value, str):
             error = response.get("error")
             if error:
-                raise TranslationTransportError(f"Ollama generation failed: {error}")
-            raise TranslationTransportError("Ollama response is missing string field 'response'")
+                raise TranslationTransportError(f"Ollama 생성 실패: {error}")
+            raise TranslationTransportError(
+                "Ollama 응답에 문자열 response 필드가 없습니다"
+            )
         return value

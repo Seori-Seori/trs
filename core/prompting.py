@@ -3,11 +3,27 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.segment import Segment, SegmentStatus
+from core.segment import Segment, SegmentStatus, ValidationSeverity
 
 
 class PromptBuildError(ValueError):
     pass
+
+
+_REPAIR_HINTS: dict[str, str] = {
+    "MISSING_PLACEHOLDER": "모든 보호 토큰을 정확히 한 번씩 원래 순서로 유지하십시오.",
+    "DUPLICATE_PLACEHOLDER": "보호 토큰을 복제하지 마십시오.",
+    "UNEXPECTED_PLACEHOLDER": "원문에 없는 보호 토큰을 만들지 마십시오.",
+    "PLACEHOLDER_ORDER_MISMATCH": "보호 토큰의 원래 순서를 유지하십시오.",
+    "KNOWN_BAD_CJK_RESIDUE": "의도적으로 보호된 값을 제외하고 한국어만 출력하십시오.",
+    "KANA_RESIDUE": "의도적으로 보호된 값을 제외하고 한국어만 출력하십시오.",
+    "EXCESSIVE_CJK_RESIDUE": "의도적으로 보호된 값을 제외하고 한국어만 출력하십시오.",
+    "ROW_ID_LEAK": "이 대상 ID와 번역 한 줄만 출력하고 다른 ID를 본문에 넣지 마십시오.",
+    "MULTIPLE_ROWS_MERGED": "현재 대상의 번역만 한 줄로 출력하십시오.",
+    "EMPTY_TRANSLATION": "원문의 내용을 생략하지 말고 한국어 번역을 출력하십시오.",
+    "MISSING_ID": "요청된 대상 ID를 빠뜨리지 마십시오.",
+    "PROMPT_LEAK": "지시문이나 설명을 복사하지 말고 번역만 출력하십시오.",
+}
 
 
 def _context_block(segment: Segment) -> str:
@@ -58,6 +74,28 @@ def build_prompt(
     for segment in segments:
         lines.append(f"{segment.id}\t{_context_block(segment)}")
     lines.append("<<<END_CONTEXT>>>")
+    if mode in {"repair", "single"}:
+        failure_rows: list[str] = []
+        for segment in segments:
+            codes = sorted(
+                {
+                    issue.code
+                    for issue in segment.validation_issues
+                    if issue.severity == ValidationSeverity.ERROR
+                }
+            )
+            if not codes:
+                continue
+            hints = list(
+                dict.fromkeys(_REPAIR_HINTS[code] for code in codes if code in _REPAIR_HINTS)
+            )
+            failure_rows.append(
+                f"{segment.id}\t{','.join(codes)}\t{' '.join(hints)}".rstrip()
+            )
+        if failure_rows:
+            lines.append("<<<FAILURES>>>")
+            lines.extend(failure_rows)
+            lines.append("<<<END_FAILURES>>>")
     lines.append("<<<TARGETS>>>")
     for segment in segments:
         prepared = segment.prepared_source if segment.prepared_source is not None else segment.source

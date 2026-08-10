@@ -21,6 +21,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "context_after": 2,
         "max_segment_chars": 6000,
         "max_batch_chars": 12000,
+        "max_prompt_chars": 48000,
     },
     "recovery": {
         "partial_repair_max_ratio": 0.25,
@@ -72,6 +73,7 @@ class TranslationConfig:
     context_after: int
     max_segment_chars: int
     max_batch_chars: int
+    max_prompt_chars: int
 
 
 @dataclass(frozen=True)
@@ -209,6 +211,10 @@ def load_config(path: str | Path | None = None, *, model_override: str | None = 
             max_batch_chars=_require_positive_int(
                 data["translation"]["max_batch_chars"], "translation.max_batch_chars"
             ),
+            max_prompt_chars=_require_positive_int(
+                data["translation"]["max_prompt_chars"],
+                "translation.max_prompt_chars",
+            ),
         ),
         recovery=RecoveryConfig(
             partial_repair_max_ratio=float(ratio),
@@ -252,4 +258,15 @@ def load_profile(name_or_path: str | Path = "novel") -> dict[str, Any]:
         raise ConfigError("Profile root must be a JSON object")
     if profile.get("target_language", "ko") != "ko":
         raise ConfigError("Profile target_language is fixed to 'ko'")
+    validation = profile.get("validation", {})
+    if not isinstance(validation, dict):
+        raise ConfigError("Profile validation policy must be a JSON object")
+    supported_severities = {"WARNING", "RISK", "ERROR"}
+    for key, value in validation.items():
+        if not key.endswith("_severity"):
+            raise ConfigError(f"Unknown profile validation policy: {key}")
+        if str(value).upper() not in supported_severities:
+            raise ConfigError(
+                f"Profile validation severity {key} must be WARNING, RISK, or ERROR"
+            )
     return profile

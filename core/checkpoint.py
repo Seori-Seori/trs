@@ -101,9 +101,8 @@ class CheckpointStore:
             updated_at=row["updated_at"],
         )
 
-    def save_segment(self, segment: Segment) -> None:
-        if not self.enabled or self._connection is None:
-            return
+    @staticmethod
+    def _issues_json(segment: Segment) -> str:
         issues = [
             {
                 "code": issue.code,
@@ -114,24 +113,15 @@ class CheckpointStore:
             }
             for issue in segment.validation_issues
         ]
+        return json.dumps(issues, ensure_ascii=False)
+
+    def save_segments(self, segments: list[Segment]) -> None:
+        if not self.enabled or self._connection is None:
+            return
+        if not segments:
+            return
         updated_at = datetime.now(timezone.utc).isoformat()
-        self._connection.execute(
-            """
-            INSERT INTO segments (
-                segment_id, source_hash, source_text, status, translation,
-                attempt_count, last_error, repaired, issues_json, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(segment_id) DO UPDATE SET
-                source_hash=excluded.source_hash,
-                source_text=excluded.source_text,
-                status=excluded.status,
-                translation=excluded.translation,
-                attempt_count=excluded.attempt_count,
-                last_error=excluded.last_error,
-                repaired=excluded.repaired,
-                issues_json=excluded.issues_json,
-                updated_at=excluded.updated_at
-            """,
+        rows = [
             (
                 segment.id,
                 sha256_text(segment.source),
@@ -141,11 +131,34 @@ class CheckpointStore:
                 segment.attempt_count,
                 segment.last_error,
                 int(segment.was_repaired),
-                json.dumps(issues, ensure_ascii=False),
+                self._issues_json(segment),
                 updated_at,
-            ),
-        )
-        self._connection.commit()
+            )
+            for segment in segments
+        ]
+        with self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO segments (
+                    segment_id, source_hash, source_text, status, translation,
+                    attempt_count, last_error, repaired, issues_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(segment_id) DO UPDATE SET
+                    source_hash=excluded.source_hash,
+                    source_text=excluded.source_text,
+                    status=excluded.status,
+                    translation=excluded.translation,
+                    attempt_count=excluded.attempt_count,
+                    last_error=excluded.last_error,
+                    repaired=excluded.repaired,
+                    issues_json=excluded.issues_json,
+                    updated_at=excluded.updated_at
+                """,
+                rows,
+            )
+
+    def save_segment(self, segment: Segment) -> None:
+        self.save_segments([segment])
 
     def valid_count(self) -> int:
         if not self.enabled or self._connection is None:
@@ -166,3 +179,17 @@ class CheckpointStore:
             (key, value),
         )
         self._connection.commit()
+
+    def get_metadata(self, key: str) -> str | None:
+        if not self.enabled or self._connection is None:
+            return None
+        row = self._connection.execute(
+            "SELECT value FROM metadata WHERE key = ?", (key,)
+        ).fetchone()
+        return None if row is None else str(row["value"])
+
+    def clear_segments(self) -> None:
+        if not self.enabled or self._connection is None:
+            return
+        with self._connection:
+            self._connection.execute("DELETE FROM segments")

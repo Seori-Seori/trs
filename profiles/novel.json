@@ -16,5 +16,11 @@
   "semantic_risk": {
     "enabled": true,
     "automatic_ai_review": false
+  },
+  "validation": {
+    "number_mismatch_severity": "RISK",
+    "negation_flip_severity": "RISK",
+    "concept_flip_severity": "RISK",
+    "partial_delimiter_loss_severity": "RISK"
   }
 }

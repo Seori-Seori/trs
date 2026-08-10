@@ -8,7 +8,7 @@ from core.batching import safe_split_with_separators
 from core.config import RecoveryConfig, TranslationConfig
 from core.parser import ResponseParser
 from core.placeholders import PlaceholderEngine
-from core.prompting import build_prompt
+from core.prompting import PromptBuildError, build_prompt
 from core.segment import (
     Segment,
     SegmentStatus,
@@ -16,7 +16,7 @@ from core.segment import (
     ValidationSeverity,
 )
 from core.validation import ValidationCoordinator
-from translators.base import Translator, TranslationTransportError
+from translators.base import Translator
 
 
 @dataclass
@@ -38,6 +38,7 @@ class RecoveryEngine:
         profile: dict[str, Any],
         *,
         on_valid: Callable[[Segment], None] | None = None,
+        on_valid_batch: Callable[[list[Segment]], None] | None = None,
     ) -> None:
         self.translator = translator
         self.parser = parser
@@ -47,6 +48,7 @@ class RecoveryEngine:
         self.translation_config = translation_config
         self.profile = profile
         self.on_valid = on_valid or (lambda _segment: None)
+        self.on_valid_batch = on_valid_batch
         self.global_issues: list[Any] = []
 
     def translate_batch(self, batch: list[Segment]) -> RecoveryResult:
@@ -73,29 +75,57 @@ class RecoveryEngine:
         if not targets:
             return [segment for segment in segments if segment.status != SegmentStatus.VALID]
 
+        failed: list[Segment] = []
+        for group in self._partition_by_prompt_budget(targets, mode=mode):
+            failed.extend(self._request_exact_group(group, mode=mode, repaired=repaired))
+        return failed
+
+    def _partition_by_prompt_budget(
+        self, targets: list[Segment], *, mode: str
+    ) -> list[list[Segment]]:
+        limit = self.translation_config.max_prompt_chars
+        groups: list[list[Segment]] = []
+        current: list[Segment] = []
+
+        for segment in targets:
+            candidate = current + [segment]
+            candidate_prompt = build_prompt(candidate, self.profile, mode=mode)
+            if len(candidate_prompt) <= limit:
+                current = candidate
+                continue
+            if current:
+                groups.append(current)
+                current = [segment]
+                single_prompt = build_prompt(current, self.profile, mode=mode)
+                if len(single_prompt) <= limit:
+                    continue
+            raise PromptBuildError(
+                f"{segment.id}의 단일 프롬프트가 translation.max_prompt_chars "
+                f"제한({limit}자)을 초과합니다"
+            )
+
+        if current:
+            groups.append(current)
+        return groups
+
+    def _request_exact_group(
+        self, targets: list[Segment], *, mode: str, repaired: bool
+    ) -> list[Segment]:
+        prompt = build_prompt(targets, self.profile, mode=mode)
+        # Transport/server failures are job-level failures. Do not change Segment
+        # state or consume its semantic retry budget until a model response exists.
+        raw_response = self.translator.translate(prompt)
+
         for segment in targets:
             segment.begin_translation()
-
-        try:
-            prompt = build_prompt(targets, self.profile, mode=mode)
-            raw_response = self.translator.translate(prompt)
-        except (TranslationTransportError, ValueError) as exc:
-            for segment in targets:
-                result = ValidationResult()
-                result.add(
-                    "TRANSLATION_REQUEST_ERROR",
-                    ValidationSeverity.ERROR,
-                    str(exc),
-                    "recovery",
-                )
-                segment.mark_for_repair(result, str(exc))
-            return targets
+            segment.record_raw_response(raw_response)
 
         parsed = self.parser.parse(raw_response)
         evaluation = self.validator.evaluate_response(parsed, targets)
         self.global_issues.extend(evaluation.global_result.issues)
 
         failed: list[Segment] = []
+        valid: list[Segment] = []
         for segment in targets:
             raw_translation = parsed.rows.get(segment.id, "")
             segment.mark_parsed(raw_translation)
@@ -109,11 +139,21 @@ class RecoveryEngine:
                     segment_evaluation.result,
                     repaired=repaired or segment.attempt_count > 1,
                 )
-                self.on_valid(segment)
+                valid.append(segment)
             else:
                 segment.mark_for_repair(segment_evaluation.result)
                 failed.append(segment)
+        self._notify_valid(valid)
         return failed
+
+    def _notify_valid(self, segments: list[Segment]) -> None:
+        if not segments:
+            return
+        if self.on_valid_batch is not None:
+            self.on_valid_batch(segments)
+            return
+        for segment in segments:
+            self.on_valid(segment)
 
     def _recover_group(self, segments: list[Segment], *, initial_mode: str) -> None:
         initial_failed = self._request_group(
@@ -201,7 +241,9 @@ class RecoveryEngine:
             child.context_after = [item.source for item in children[index + 1:index + 3]] + parent.context_after
 
         original_callback = self.on_valid
+        original_batch_callback = self.on_valid_batch
         self.on_valid = lambda _segment: None
+        self.on_valid_batch = lambda _segments: None
         try:
             # A long parent is split specifically to reduce each model request,
             # so its children must not be recombined into one oversized prompt.
@@ -209,10 +251,16 @@ class RecoveryEngine:
                 self._recover_group([child], initial_mode="split")
         finally:
             self.on_valid = original_callback
+            self.on_valid_batch = original_batch_callback
 
         parent.attempt_count = max((child.attempt_count for child in children), default=0)
         failed_children = [child for child in children if child.status != SegmentStatus.VALID]
         if failed_children:
+            diagnostic_child = failed_children[-1]
+            parent.last_raw_response = diagnostic_child.last_raw_response
+            parent.last_raw_response_truncated = (
+                diagnostic_child.last_raw_response_truncated
+            )
             result = ValidationResult()
             result.add(
                 "LONG_SEGMENT_PART_FAILED",
@@ -220,8 +268,18 @@ class RecoveryEngine:
                 "One or more safe-split parts failed translation",
                 "recovery",
                 child_ids=[child.id for child in failed_children],
+                child_failure_codes={
+                    child.id: sorted(
+                        {
+                            issue.code
+                            for issue in child.validation_issues
+                            if issue.severity == ValidationSeverity.ERROR
+                        }
+                    )
+                    for child in failed_children
+                },
             )
-            parent.mark_failed(result)
+            parent.mark_failed(result, "긴 문단의 분할 조각 번역이 끝까지 실패했습니다")
             return
 
         translated_parts: list[str] = []
@@ -241,4 +299,4 @@ class RecoveryEngine:
             final_result,
             repaired=any(child.was_repaired for child in children),
         )
-        self.on_valid(parent)
+        self._notify_valid([parent])

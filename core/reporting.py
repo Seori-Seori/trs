@@ -30,6 +30,8 @@ def build_qa_report(
     output_path: str | Path,
     model: str,
     backup_path: str | Path,
+    mode: str = "novel",
+    profile: str = "novel",
 ) -> dict[str, Any]:
     segments = pipeline_result.segments
     risk_count = sum(
@@ -51,6 +53,8 @@ def build_qa_report(
         "output_file": str(Path(output_path).resolve()),
         "backup_file": str(Path(backup_path).resolve()),
         "model": model,
+        "mode": mode,
+        "profile": profile,
         "summary": {
             "total": len(segments),
             "valid": len(pipeline_result.valid),
@@ -80,6 +84,15 @@ def build_qa_report(
                 "source": segment.source,
                 "attempt_count": segment.attempt_count,
                 "last_error": segment.last_error,
+                "failure_codes": sorted(
+                    {
+                        issue.code
+                        for issue in segment.validation_issues
+                        if issue.severity == ValidationSeverity.ERROR
+                    }
+                ),
+                "last_raw_response": segment.last_raw_response,
+                "last_raw_response_truncated": segment.last_raw_response_truncated,
                 "issues": [_issue_to_dict(issue) for issue in segment.validation_issues],
             }
             for segment in failed

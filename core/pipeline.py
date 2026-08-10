@@ -51,12 +51,15 @@ class TranslationPipeline:
             protect_internal_newlines=config.placeholders.protect_internal_newlines,
         )
         self.parser = ResponseParser()
-        self.validator = ValidationCoordinator(config.validators, self.placeholder_engine)
+        self.validator = ValidationCoordinator(
+            config.validators, self.placeholder_engine, profile
+        )
 
     def process(self, segments: list[Segment], *, resume: bool = True) -> PipelineResult:
         self._build_context(segments)
         resumed = 0
         already_korean = 0
+        already_korean_segments: list[Segment] = []
 
         for segment in segments:
             segment.source_language = detect_language(
@@ -80,8 +83,10 @@ class TranslationPipeline:
                 if not validation.has_errors:
                     segment.mark_valid(segment.source, validation)
                     already_korean += 1
-                    if self.checkpoint:
-                        self.checkpoint.save_segment(segment)
+                    already_korean_segments.append(segment)
+
+        if self.checkpoint and already_korean_segments:
+            self.checkpoint.save_segments(already_korean_segments)
 
         pending = [segment for segment in segments if segment.status != SegmentStatus.VALID]
         batches = build_batches(
@@ -91,9 +96,9 @@ class TranslationPipeline:
         )
         global_issues: list[ValidationIssue] = []
 
-        def save_valid(segment: Segment) -> None:
+        def save_valid_batch(valid_segments: list[Segment]) -> None:
             if self.checkpoint:
-                self.checkpoint.save_segment(segment)
+                self.checkpoint.save_segments(valid_segments)
 
         recovery = RecoveryEngine(
             translator=self.translator,
@@ -103,7 +108,7 @@ class TranslationPipeline:
             recovery_config=self.config.recovery,
             translation_config=self.config.translation,
             profile=self.profile,
-            on_valid=save_valid,
+            on_valid_batch=save_valid_batch,
         )
         self.progress(
             f"총 {len(segments)}개 문단: 재개 {resumed}, 한국어 유지 {already_korean}, 번역 대상 {len(pending)}"
@@ -115,9 +120,8 @@ class TranslationPipeline:
             result = recovery.translate_batch(batch)
             global_issues.extend(result.global_issues)
             recovery.global_issues.clear()
-            for failed in result.failed:
-                if self.checkpoint:
-                    self.checkpoint.save_segment(failed)
+            if self.checkpoint and result.failed:
+                self.checkpoint.save_segments(result.failed)
             self.progress(
                 f"배치 {batch_index}/{len(batches)} 완료: VALID {len(result.valid)}, FAILED {len(result.failed)}"
             )

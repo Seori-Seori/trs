@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from core.config import ValidatorsConfig
 from core.parser import ParsedResponse
 from core.segment import Segment, ValidationResult, ValidationSeverity
+from validators.policy import policy_severity
 
 
 _ROW_ID_RE = re.compile(r"(?<![A-Za-z0-9_])(?:SEG|ADULT)_[A-Za-z0-9_-]+")
@@ -20,7 +22,7 @@ _PROMPT_LEAK_PATTERNS = [
         r"번역\s*규칙",
         r"다음(?:의)?\s*텍스트를\s*번역",
         r"출력\s*형식",
-        r"<<<(?:targets|context|end)",
+        r"<<<(?:targets|context|failures|end)",
     )
 ]
 
@@ -125,14 +127,17 @@ def validate_structure(
                 "structure",
             )
         if config.detect_row_id_leak:
-            leaked = _ROW_ID_RE.findall(translation)
+            leaked = set(_ROW_ID_RE.findall(translation))
+            leaked.update(
+                expected_id for expected_id in expected_ids if expected_id in translation
+            )
             if leaked:
                 result.add(
                     "ROW_ID_LEAK",
                     ValidationSeverity.ERROR,
                     "A row ID leaked into the translation text",
                     "structure",
-                    ids=leaked,
+                    ids=sorted(leaked),
                 )
         if config.detect_prompt_leak:
             leaks = [pattern.pattern for pattern in _PROMPT_LEAK_PATTERNS if pattern.search(translation)]
@@ -171,8 +176,15 @@ def _balanced_pair_count(text: str, opening: str, closing: str) -> int:
     return text.count(opening)
 
 
-def validate_text_structure(source: str, translation: str) -> ValidationResult:
+def validate_text_structure(
+    source: str,
+    translation: str,
+    policy: Mapping[str, object] | None = None,
+) -> ValidationResult:
     result = ValidationResult()
+    partial_loss_severity = policy_severity(
+        policy, "partial_delimiter_loss_severity", ValidationSeverity.RISK
+    )
 
     for group_name, pairs in _PAIR_GROUPS:
         source_count = sum(max(_balanced_pair_count(source, op, cl), 0) for op, cl in pairs)
@@ -185,14 +197,26 @@ def validate_text_structure(source: str, translation: str) -> ValidationResult:
                 "structure",
                 group=group_name,
             )
-        elif source_count > 0 and sum(translated_counts) == 0:
-            result.add(
-                "BRACKET_STRUCTURE_LOSS",
-                ValidationSeverity.ERROR,
-                f"A {group_name} pair from the source disappeared",
-                "structure",
-                group=group_name,
-            )
+        else:
+            translated_count = sum(translated_counts)
+            if source_count > 0 and translated_count == 0:
+                result.add(
+                    "BRACKET_STRUCTURE_LOSS",
+                    ValidationSeverity.ERROR,
+                    f"A {group_name} pair from the source disappeared",
+                    "structure",
+                    group=group_name,
+                )
+            elif source_count > translated_count:
+                result.add(
+                    "BRACKET_STRUCTURE_PARTIAL_LOSS",
+                    partial_loss_severity,
+                    f"Some {group_name} pairs from the source disappeared",
+                    "structure",
+                    group=group_name,
+                    source_pairs=source_count,
+                    translation_pairs=translated_count,
+                )
 
     source_quote_count = sum(max(_balanced_pair_count(source, op, cl), 0) for op, cl in _QUOTE_PAIRS)
     translated_quote_counts = [_balanced_pair_count(translation, op, cl) for op, cl in _QUOTE_PAIRS]
@@ -203,13 +227,24 @@ def validate_text_structure(source: str, translation: str) -> ValidationResult:
             "Translation has unbalanced quotation marks",
             "structure",
         )
-    elif source_quote_count > 0 and sum(translated_quote_counts) == 0:
-        result.add(
-            "QUOTE_STRUCTURE_LOSS",
-            ValidationSeverity.ERROR,
-            "Quotation marks from the source disappeared",
-            "structure",
-        )
+    else:
+        translated_quote_count = sum(translated_quote_counts)
+        if source_quote_count > 0 and translated_quote_count == 0:
+            result.add(
+                "QUOTE_STRUCTURE_LOSS",
+                ValidationSeverity.ERROR,
+                "Quotation marks from the source disappeared",
+                "structure",
+            )
+        elif source_quote_count > translated_quote_count:
+            result.add(
+                "QUOTE_STRUCTURE_PARTIAL_LOSS",
+                partial_loss_severity,
+                "Some structural quote pairs from the source disappeared",
+                "structure",
+                source_pairs=source_quote_count,
+                translation_pairs=translated_quote_count,
+            )
 
     source_len = len(source.strip())
     translated_len = len(translation.strip())

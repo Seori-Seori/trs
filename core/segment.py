@@ -122,6 +122,8 @@ class Segment:
     metadata: dict[str, Any] = field(default_factory=dict)
     prepared_source: str | None = None
     raw_translation: str | None = None
+    last_raw_response: str | None = None
+    last_raw_response_truncated: bool = False
     translation: str | None = None
     status: SegmentStatus = SegmentStatus.PENDING
     attempt_count: int = 0
@@ -167,6 +169,22 @@ class Segment:
     def mark_parsed(self, raw_translation: str) -> None:
         self.raw_translation = raw_translation
         self.transition(SegmentStatus.PARSED)
+
+    def record_raw_response(self, raw_response: str, *, limit: int = 4000) -> None:
+        if limit <= 0:
+            raise ValueError("Raw response limit must be positive")
+        if len(raw_response) <= limit:
+            self.last_raw_response = raw_response
+            self.last_raw_response_truncated = False
+            return
+        marker = "\n... [중간 생략] ...\n"
+        remaining = max(0, limit - len(marker))
+        head = (remaining * 3) // 4
+        tail = remaining - head
+        self.last_raw_response = (
+            raw_response[:head] + marker + (raw_response[-tail:] if tail else "")
+        )
+        self.last_raw_response_truncated = True
 
     def mark_for_repair(self, result: ValidationResult, error: str | None = None) -> None:
         self.validation_issues = list(result.issues)

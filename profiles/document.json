@@ -1,0 +1,24 @@
+{
+  "name": "document",
+  "style": "conservative_information_preserving_korean",
+  "target_language": "ko",
+  "context_before": 1,
+  "context_after": 1,
+  "instructions": [
+    "정보를 보존하는 충실하고 자연스러운 한국어로 번역한다.",
+    "원문에 없는 설명, 해석, 요약을 추가하지 않는다.",
+    "수치, URL, 경로, 이름, 기술 값과 부정·상태를 정확히 보존한다.",
+    "문학적인 의역보다 명확성과 사실 보존을 우선한다.",
+    "문맥은 판단에만 사용하며 현재 target 이외의 문장을 출력하지 않는다."
+  ],
+  "semantic_risk": {
+    "enabled": true,
+    "automatic_ai_review": false
+  },
+  "validation": {
+    "number_mismatch_severity": "ERROR",
+    "negation_flip_severity": "ERROR",
+    "concept_flip_severity": "ERROR",
+    "partial_delimiter_loss_severity": "ERROR"
+  }
+}

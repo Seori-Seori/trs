@@ -52,56 +52,80 @@ class _OllamaHandler(BaseHTTPRequestHandler):
 
 
 class CliOllamaHttpIntegrationTests(unittest.TestCase):
-    def test_main_txt_to_korean_txt_through_ollama_http_contract(self) -> None:
-        _OllamaHandler.requests = []
+    def test_main_txt_to_korean_txt_for_all_modes_and_resume(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with tempfile.TemporaryDirectory() as directory:
-                temp = Path(directory)
-                input_path = temp / "novel.txt"
-                input_path.write_text("Hello %PLAYER%\r\n\r\n世界", encoding="utf-8", newline="")
+            for mode in ("novel", "game", "document"):
+                with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                    _OllamaHandler.requests = []
+                    temp = Path(directory)
+                    input_path = temp / "input.txt"
+                    input_path.write_text(
+                        "Hello %PLAYER%\r\n\r\n世界", encoding="utf-8", newline=""
+                    )
 
-                config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-                config["ollama"]["base_url"] = f"http://127.0.0.1:{server.server_port}"
-                config["ollama"]["model"] = "test-hy-mt"
-                config_path = temp / "config.json"
-                config_path.write_text(
-                    json.dumps(config, ensure_ascii=False), encoding="utf-8"
-                )
+                    config = json.loads(
+                        (ROOT / "config.json").read_text(encoding="utf-8")
+                    )
+                    config["ollama"]["base_url"] = (
+                        f"http://127.0.0.1:{server.server_port}"
+                    )
+                    config["ollama"]["model"] = "test-hy-mt"
+                    config_path = temp / "config.json"
+                    config_path.write_text(
+                        json.dumps(config, ensure_ascii=False), encoding="utf-8"
+                    )
 
-                exit_code = run(
-                    [
+                    arguments = [
                         str(input_path),
                         "--config",
                         str(config_path),
-                        "--profile",
-                        str(ROOT / "profiles" / "novel.json"),
+                        "--mode",
+                        mode,
                     ]
-                )
-                self.assertEqual(exit_code, 0)
-                with (temp / "novel.ko.txt").open(
-                    "r", encoding="utf-8", newline=""
-                ) as translated_file:
-                    translated_text = translated_file.read()
-                self.assertEqual(translated_text, "안녕 %PLAYER%\r\n\r\n세계")
-                self.assertTrue((temp / "novel.seori.sqlite").is_file())
-                report = json.loads((temp / "novel.qa.json").read_text(encoding="utf-8"))
-                self.assertEqual(report["summary"]["valid"], 2)
-                self.assertEqual(report["summary"]["failed"], 0)
-                self.assertEqual(len(list((temp / "backup").glob("novel.*.txt"))), 1)
-                self.assertEqual(len(_OllamaHandler.requests), 1)
-                self.assertEqual(_OllamaHandler.requests[0]["model"], "test-hy-mt")
-                self.assertEqual(
-                    _OllamaHandler.requests[0]["options"],
-                    {
-                        "top_k": 20,
-                        "top_p": 0.6,
-                        "repeat_penalty": 1.05,
-                        "temperature": 0.7,
-                    },
-                )
+                    self.assertEqual(run(arguments), 0)
+                    with (temp / "input.ko.txt").open(
+                        "r", encoding="utf-8", newline=""
+                    ) as translated_file:
+                        translated_text = translated_file.read()
+                    self.assertEqual(translated_text, "안녕 %PLAYER%\r\n\r\n세계")
+                    self.assertTrue((temp / "input.seori.sqlite").is_file())
+                    report = json.loads(
+                        (temp / "input.qa.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(report["mode"], mode)
+                    self.assertEqual(report["profile"], mode)
+                    self.assertEqual(report["summary"]["valid"], 2)
+                    self.assertEqual(report["summary"]["failed"], 0)
+                    self.assertEqual(
+                        len(list((temp / "backup").glob("input.*.txt"))), 1
+                    )
+                    self.assertEqual(len(_OllamaHandler.requests), 1)
+                    self.assertEqual(
+                        _OllamaHandler.requests[0]["model"], "test-hy-mt"
+                    )
+                    self.assertEqual(
+                        _OllamaHandler.requests[0]["options"],
+                        {
+                            "top_k": 20,
+                            "top_p": 0.6,
+                            "repeat_penalty": 1.05,
+                            "temperature": 0.7,
+                        },
+                    )
+
+                    # Ordinary resume must reuse VALID rows and the existing backup.
+                    self.assertEqual(run(arguments), 0)
+                    self.assertEqual(len(_OllamaHandler.requests), 1)
+                    self.assertEqual(
+                        len(list((temp / "backup").glob("input.*.txt"))), 1
+                    )
+                    resumed_report = json.loads(
+                        (temp / "input.qa.json").read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(resumed_report["summary"]["resumed"], 2)
         finally:
             server.shutdown()
             server.server_close()

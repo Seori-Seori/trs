@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from core.config import ValidatorsConfig
 from core.segment import ValidationResult, ValidationSeverity
+from validators.policy import policy_severity
 
 
 _NUMBER_RE = re.compile(r"(?<!\w)[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?!\w)")
@@ -48,7 +50,7 @@ _CONCEPT_PAIRS = [
         "ENABLE_DISABLE_FLIP_RISK",
         re.compile(r"\benable(?:d)?\b|有効|启用", re.IGNORECASE),
         re.compile(r"\bdisable(?:d)?\b|無効|禁用", re.IGNORECASE),
-        re.compile(r"활성화|사용함|켜"),
+        re.compile(r"(?<!비)활성화|사용함|켜"),
         re.compile(r"비활성화|사용하지|꺼"),
     ),
     (
@@ -68,7 +70,12 @@ _CONCEPT_PAIRS = [
 ]
 
 
-def validate_risks(source: str, translation: str, config: ValidatorsConfig) -> ValidationResult:
+def validate_risks(
+    source: str,
+    translation: str,
+    config: ValidatorsConfig,
+    policy: Mapping[str, object] | None = None,
+) -> ValidationResult:
     result = ValidationResult()
 
     if config.detect_number_risk:
@@ -76,9 +83,16 @@ def validate_risks(source: str, translation: str, config: ValidatorsConfig) -> V
         translated_numbers = _NUMBER_RE.findall(translation)
         if source_numbers or translated_numbers:
             code = "NUMBER_MISMATCH_RISK" if source_numbers != translated_numbers else "NUMBER_PRESENT_RISK"
+            severity = (
+                policy_severity(
+                    policy, "number_mismatch_severity", ValidationSeverity.RISK
+                )
+                if code == "NUMBER_MISMATCH_RISK"
+                else ValidationSeverity.RISK
+            )
             result.add(
                 code,
-                ValidationSeverity.RISK,
+                severity,
                 "Numbers require meaning-preservation review",
                 "risk",
                 source_numbers=source_numbers,
@@ -91,7 +105,9 @@ def validate_risks(source: str, translation: str, config: ValidatorsConfig) -> V
         if source_negative != translated_negative:
             result.add(
                 "NEGATION_FLIP_RISK",
-                ValidationSeverity.RISK,
+                policy_severity(
+                    policy, "negation_flip_severity", ValidationSeverity.RISK
+                ),
                 "Source and translation may disagree on negation",
                 "risk",
                 source_negative=source_negative,
@@ -110,7 +126,9 @@ def validate_risks(source: str, translation: str, config: ValidatorsConfig) -> V
             if flipped:
                 result.add(
                     code,
-                    ValidationSeverity.RISK,
+                    policy_severity(
+                        policy, "concept_flip_severity", ValidationSeverity.RISK
+                    ),
                     "A direction/state concept may have been reversed",
                     "risk",
                 )
