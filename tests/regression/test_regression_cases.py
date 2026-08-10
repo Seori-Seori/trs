@@ -801,19 +801,55 @@ class MandatoryRegressionCases(unittest.TestCase):
         self.assertFalse(protected_item.result.has_errors)
 
     def test_r48_obvious_korean_mid_clause_truncation_is_error(self) -> None:
-        segment = self._prepared_zh(
-            "持续不断的震动声音清晰地在她的耳边回响。"
-        )
-        parsed = SingleTranslationParser().parse(
-            "계속되는 진동 소리가 그녀의 귀에 울"
-        )
-        item = ValidationCoordinator(
-            self.config.validators, self.engine, self.profile
-        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+        cases = [
+            (
+                "持续不断的震动声音清晰地在她的耳边回响。",
+                "계속되는 진동 소리가 그녀의 귀에 울",
+            ),
+            (
+                "持续不断的震动声音清晰地在她的耳边回响。💕",
+                "계속되는 진동 소리가 그녀의 귀에 울💕",
+            ),
+            (
+                "持续不断的震动声音清晰地在她的耳边回响。❤️",
+                "계속되는 진동 소리가 그녀의 귀에 울❤️",
+            ),
+            (
+                "「持续不断的震动声音清晰地在她的耳边回响。💪🏻」",
+                "「계속되는 진동 소리가 그녀의 귀에 울💪🏻」",
+            ),
+        ]
+        for index, (source, translation) in enumerate(cases, start=1):
+            with self.subTest(translation=translation):
+                segment = self._prepared_zh(
+                    source, f"SEG_00000048_{index}"
+                )
+                parsed = SingleTranslationParser().parse(translation)
+                item = ValidationCoordinator(
+                    self.config.validators, self.engine, self.profile
+                ).evaluate_single(parsed, segment).by_segment_id[segment.id]
 
-        self.assertIsNone(item.translation)
-        self.assertIn(
-            "TRUNCATED_OUTPUT", [issue.code for issue in item.result.issues]
+                self.assertIsNone(item.translation)
+                self.assertIn(
+                    "TRUNCATED_OUTPUT",
+                    [issue.code for issue in item.result.issues],
+                )
+
+        complete_segment = self._prepared_zh(
+            "持续不断的震动声音清晰地在她的耳边回响。💕",
+            "SEG_00000048_COMPLETE",
+        )
+        complete_translation = "계속되는 진동 소리가 그녀의 귀에 울렸다💕"
+        complete_item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(complete_translation),
+            complete_segment,
+        ).by_segment_id[complete_segment.id]
+        self.assertEqual(complete_item.translation, complete_translation)
+        self.assertNotIn(
+            "TRUNCATED_OUTPUT",
+            [issue.code for issue in complete_item.result.issues],
         )
 
     def test_r49_legitimate_short_fragment_is_not_truncated(self) -> None:
