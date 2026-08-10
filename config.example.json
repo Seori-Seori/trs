@@ -1,0 +1,43 @@
+{
+  "ollama": {
+    "base_url": "http://127.0.0.1:11434",
+    "model": "huihui_ai/hy-mt1.5-abliterated:7b",
+    "timeout_seconds": 180
+  },
+  "translation": {
+    "target_language": "ko",
+    "source_language": "auto",
+    "batch_size": 12,
+    "context_before": 3,
+    "context_after": 2
+  },
+  "recovery": {
+    "partial_repair_max_ratio": 0.25,
+    "max_attempts": 3,
+    "split_on_failure": true
+  },
+  "checkpoint": {
+    "enabled": true
+  },
+  "output": {
+    "suffix": ".ko",
+    "create_backup": true,
+    "qa_report": true,
+    "overwrite_source": false
+  },
+  "validators": {
+    "strict_id_order": true,
+    "detect_prompt_leak": true,
+    "detect_row_id_leak": true,
+    "detect_unexpected_scripts": true,
+    "detect_cjk_residue": true,
+    "detect_number_risk": true,
+    "detect_negation_risk": true,
+    "detect_direction_risk": true,
+    "detect_state_flip_risk": true
+  },
+  "placeholders": {
+    "protect_internal_newlines": true,
+    "custom_patterns": []
+  }
+}
