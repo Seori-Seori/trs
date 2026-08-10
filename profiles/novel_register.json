@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "medical_context_terms": [
     "医生",
     "醫生",
@@ -25,24 +25,20 @@
   ],
   "entries": [
     {
-      "source_terms": ["胸", "奶子", "咪咪", "酥胸", "双乳", "雙乳", "胸脯"],
+      "source_terms": ["奶子", "咪咪", "酥胸", "双乳", "雙乳", "胸脯"],
       "language": "zh",
       "meaning_class": "breast_colloquial_or_erotic",
       "source_register": "erotic_colloquial",
       "preferred_register": "natural_korean_genre_fiction",
-      "preferred_korean": ["가슴", "젖가슴"],
-      "avoid_korean": ["유방", "유선", "흉부"],
-      "notes": "문맥과 강도에 맞는 자연스러운 가슴 표현을 고르고 의학·해부학 문체로 바꾸지 않는다."
+      "avoid_korean": ["유방", "유선", "흉부"]
     },
     {
-      "source_terms": ["奶头"],
+      "source_terms": ["奶头", "奶頭"],
       "language": "zh",
       "meaning_class": "nipple_colloquial",
       "source_register": "erotic_colloquial",
       "preferred_register": "natural_korean_genre_fiction",
-      "preferred_korean": ["젖꼭지"],
-      "avoid_korean": ["유두"],
-      "notes": "구어적 성적 문맥에서는 같은 강도의 자연스러운 한국어를 사용한다."
+      "avoid_korean": ["유두"]
     },
     {
       "source_terms": ["大腿", "腿根"],
@@ -50,39 +46,31 @@
       "meaning_class": "thigh_everyday",
       "source_register": "neutral_or_erotic_everyday",
       "preferred_register": "ordinary_korean_fiction",
-      "preferred_korean": ["허벅지", "허벅지 안쪽"],
-      "avoid_korean": ["대퇴부", "대퇴", "서혜부"],
-      "notes": "일상·소설 문맥에서는 해부학 명칭 대신 자연스러운 신체 표현을 사용한다."
+      "avoid_korean": ["대퇴부", "대퇴", "서혜부"]
     },
     {
-      "source_terms": ["小穴", "花壶"],
+      "source_terms": ["小穴", "花壶", "花壺"],
       "language": "zh",
-      "meaning_class": "female_genital_playful_euphemism",
+      "meaning_class": "context_dependent_genital_euphemism",
       "source_register": "playful_euphemism",
-      "preferred_register": "natural_korean_erotic_euphemism",
-      "preferred_korean": ["그곳", "구멍", "문맥에 맞는 완곡어"],
-      "avoid_korean": ["여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관", "질강"],
-      "notes": "사물 표면을 직역하지 말고 원문의 완곡함과 노골성에 맞는 한국 장르소설 표현을 고른다."
+      "preferred_register": "contextual_korean_fiction",
+      "avoid_korean": ["여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관", "질강"]
     },
     {
-      "source_terms": ["骚屄", "肉洞"],
+      "source_terms": ["骚屄", "騷屄", "肉洞"],
       "language": "zh",
       "meaning_class": "female_genital_vulgar",
       "source_register": "vulgar_explicit",
       "preferred_register": "comparable_korean_vulgar_fiction",
-      "preferred_korean": ["원문과 같은 강도의 여성 성기 비속어"],
-      "avoid_korean": ["음부", "여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관"],
-      "notes": "강한 비속어를 임상 용어나 순화된 표현으로 바꾸지 않고 원문과 같은 강도를 유지한다."
+      "avoid_korean": ["음부", "여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관"]
     },
     {
-      "source_terms": ["阴户", "穴口"],
+      "source_terms": ["阴户", "陰戶", "穴口"],
       "language": "zh",
       "meaning_class": "female_genital_reference",
       "source_register": "erotic_colloquial",
       "preferred_register": "natural_korean_erotic_fiction",
-      "preferred_korean": ["문맥에 맞는 여성 성기 표현", "입구"],
-      "avoid_korean": ["여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관"],
-      "notes": "의료 문맥이 아니라면 기술 명사를 쌓지 말고 자연스러운 소설 표현을 사용한다."
+      "avoid_korean": ["여성의 외부 성기", "여성 외부 성기", "외부 생식기", "여성 생식기", "생식 기관", "생식기관"]
     },
     {
       "source_terms": ["自慰棒"],
@@ -90,9 +78,7 @@
       "meaning_class": "sex_toy",
       "source_register": "erotic_everyday",
       "preferred_register": "natural_korean_erotic_fiction",
-      "preferred_korean": ["자위 기구", "딜도", "바이브레이터"],
-      "avoid_korean": ["자위봉"],
-      "notes": "문맥상 기구 종류에 맞는 자연스러운 장르 표현을 사용한다."
+      "avoid_korean": ["자위봉"]
     },
     {
       "source_terms": ["本小姐", "本姑娘", "本少女"],
@@ -100,9 +86,7 @@
       "meaning_class": "playful_self_reference",
       "source_register": "playful_first_person",
       "preferred_register": "natural_korean_internal_monologue",
-      "preferred_korean": ["나", "내가", "문맥에 맞는 자연스러운 자기지칭"],
-      "avoid_korean": ["본 아가씨", "이 아가씨", "본 소녀"],
-      "notes": "중국어 자기지칭을 직역하지 말고 화자 말투에 맞는 자연스러운 한국어 1인칭으로 옮긴다."
+      "avoid_korean": ["본 아가씨", "이 아가씨", "본 소녀"]
     }
   ]
 }

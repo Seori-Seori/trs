@@ -9,6 +9,7 @@ from adapters.text import TextAdapter
 from core.checkpoint import CheckpointStore
 from core.config import ConfigError, load_config, load_profile
 from core.diagnostics import FailureDebugStore
+from core.mappings import load_job_mappings, resolve_job_mappings
 from core.pipeline import TranslationPipeline
 from core.reporting import build_qa_report, write_json_atomic
 from translators.base import TranslationTransportError
@@ -40,6 +41,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--profile",
         help="고급 설정: --mode의 기본 프로필 대신 사용할 프로필 이름 또는 JSON 경로",
+    )
+    parser.add_argument(
+        "--mapping",
+        type=Path,
+        help=(
+            "이번 작업에서만 고정할 이름/용어 매핑 JSON 경로. "
+            "매핑은 checkpoint에 저장되어 resume 시 동일하게 재사용됩니다"
+        ),
     )
     resume_group = parser.add_mutually_exclusive_group()
     resume_group.add_argument("--resume", dest="resume", action="store_true", default=True)
@@ -135,6 +144,11 @@ def run(argv: list[str] | None = None) -> int:
         config = load_config(args.config, model_override=args.model)
         profile_selector = args.profile or mode
         profile = load_profile(profile_selector)
+        provided_mappings = (
+            load_job_mappings(args.mapping.expanduser().resolve())
+            if args.mapping is not None
+            else None
+        )
         default_output, checkpoint_path, report_path = _default_paths(
             input_path, config.output.suffix
         )
@@ -174,6 +188,11 @@ def run(argv: list[str] | None = None) -> int:
             _preflight_ollama(translator)
             if not args.resume:
                 checkpoint.clear_segments()
+            job_mappings = resolve_job_mappings(
+                checkpoint,
+                provided_mappings,
+                resume=args.resume,
+            )
 
             checkpoint.set_metadata("source_file", str(input_path))
             checkpoint.set_metadata("source_sha256", document.source_sha256)
@@ -196,6 +215,7 @@ def run(argv: list[str] | None = None) -> int:
             print(f"모드: {mode}")
             print(f"프로필: {profile.get('name', profile_selector)}")
             print(f"모델: {config.ollama.model}")
+            print(f"작업 고정 매핑: {len(job_mappings.entries)}개")
             print(f"백업: {backup_path}")
             if failure_debug is not None:
                 print(f"실패 디버그: {debug_path}")
@@ -206,6 +226,7 @@ def run(argv: list[str] | None = None) -> int:
                 checkpoint,
                 progress=lambda message: print(f"[Seori] {message}", flush=True),
                 failure_debug=failure_debug,
+                job_mappings=job_mappings,
             )
             result = pipeline.process(segments, resume=args.resume)
 

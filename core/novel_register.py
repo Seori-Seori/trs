@@ -21,9 +21,7 @@ class NovelRegisterHint:
     meaning_class: str
     source_register: str
     preferred_register: str
-    preferred_korean: tuple[str, ...]
     avoid_korean: tuple[str, ...]
-    notes: str
 
     def matched_source_terms(self, source: str) -> tuple[str, ...]:
         return tuple(term for term in self.source_terms if term in source)
@@ -33,46 +31,6 @@ class NovelRegisterHint:
 class NovelRegisterResource:
     medical_context_terms: tuple[str, ...]
     entries: tuple[NovelRegisterHint, ...]
-
-
-@dataclass(frozen=True)
-class NovelNameHint:
-    source: str
-    korean: str
-
-
-class NovelJobNameMap:
-    """Small deterministic name map instantiated once for one translation job."""
-
-    def __init__(self, mappings: dict[str, str] | None = None) -> None:
-        self._mappings = tuple(
-            (source, korean) for source, korean in (mappings or {}).items()
-        )
-
-    @classmethod
-    def from_profile(cls, profile: dict[str, Any] | None) -> "NovelJobNameMap":
-        if not is_novel_profile(profile):
-            return cls()
-        raw = (profile or {}).get("name_map", {})
-        if not isinstance(raw, dict):
-            raise ValueError("Novel profile name_map must be an object")
-        mappings: dict[str, str] = {}
-        for source, korean in raw.items():
-            if not isinstance(source, str) or not source.strip():
-                raise ValueError("Novel profile name_map keys must be non-empty strings")
-            if not isinstance(korean, str) or not korean.strip():
-                raise ValueError("Novel profile name_map values must be non-empty strings")
-            mappings[source] = korean
-        return cls(mappings)
-
-    def matching(self, source: str, source_language: str) -> list[NovelNameHint]:
-        if source_language not in {"zh", "auto", "unknown"}:
-            return []
-        return [
-            NovelNameHint(source=source_term, korean=korean)
-            for source_term, korean in self._mappings
-            if source_term in source
-        ]
 
 
 def _string_tuple(value: object, *, field: str) -> tuple[str, ...]:
@@ -114,7 +72,6 @@ def load_novel_register_resource() -> NovelRegisterResource:
         meaning_class = entry.get("meaning_class")
         source_register = entry.get("source_register")
         preferred_register = entry.get("preferred_register")
-        notes = entry.get("notes")
         if not all(
             isinstance(value, str) and value
             for value in (
@@ -122,11 +79,10 @@ def load_novel_register_resource() -> NovelRegisterResource:
                 meaning_class,
                 source_register,
                 preferred_register,
-                notes,
             )
         ):
             raise ValueError(
-                "Novel register language/meaning/register/notes fields must be strings"
+                "Novel register language/meaning/register fields must be strings"
             )
         hints.append(
             NovelRegisterHint(
@@ -135,13 +91,9 @@ def load_novel_register_resource() -> NovelRegisterResource:
                 meaning_class=meaning_class,
                 source_register=source_register,
                 preferred_register=preferred_register,
-                preferred_korean=_string_tuple(
-                    entry.get("preferred_korean"), field="preferred_korean"
-                ),
                 avoid_korean=_string_tuple(
                     entry.get("avoid_korean"), field="avoid_korean"
                 ),
-                notes=notes,
             )
         )
     return NovelRegisterResource(medical_context_terms, tuple(hints))

@@ -28,6 +28,11 @@ class ProtectedToken:
     original: str
     kind: str
     order: int
+    mapped_target: str | None = None
+
+    @property
+    def restored_value(self) -> str:
+        return self.mapped_target if self.mapped_target is not None else self.original
 
 
 @dataclass(frozen=True)

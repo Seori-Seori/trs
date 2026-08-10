@@ -3,13 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.novel_register import (
-    NovelJobNameMap,
-    NovelRegisterHint,
-    matching_novel_register_hints,
-)
 from core.segment import Segment, SegmentStatus, ValidationSeverity
-from core.terminology import NovelTermHint, matching_novel_term_hints
 
 
 class PromptBuildError(ValueError):
@@ -38,7 +32,7 @@ _REPAIR_HINTS: dict[str, str] = {
     "QUOTE_STRUCTURE_LOSS": "원문에 있는 인용부호 쌍을 번역에서도 유지하십시오.",
     "NOVEL_CJK_RESIDUE": "고유명사 whitelist 외의 중국어 한자를 남기지 말고 완전한 한국어로 번역하십시오.",
     "TRUNCATED_OUTPUT": "문장을 중간에서 끊지 말고 원문의 끝까지 완전한 한국어 문장으로 번역하십시오.",
-    "NOVEL_TERM_MISTRANSLATION": "현재 원문에 제시된 용어 참고를 따라 성별·대상·의미 범주를 정확히 번역하십시오.",
+    "NOVEL_TERM_MISTRANSLATION": "원문의 성별·대상·사물·장소 의미 범주를 다른 범주로 바꾸지 마십시오.",
 }
 
 
@@ -61,38 +55,20 @@ def _prepared_source(segment: Segment) -> str:
     )
 
 
-def _semantic_repair_lines(
-    segment: Segment,
-    terminology_hints: list[NovelTermHint],
-    register_hints: list[NovelRegisterHint],
-) -> list[str]:
-    failed_terms = {
-        str(issue.details.get("source_term"))
-        for issue in segment.validation_issues
-        if issue.code == "NOVEL_TERM_MISTRANSLATION"
-        and issue.details.get("source_term")
-    }
-    if not failed_terms:
-        return []
-
-    lines = ["의미 오류 복구 참고(현재 원문에서 검출된 항목만):"]
-    for hint in terminology_hints:
-        if hint.source not in failed_terms:
-            continue
-        register = next(
-            (
-                item.preferred_register
-                for item in register_hints
-                if hint.source in item.source_terms
-            ),
-            "natural_korean_genre_fiction",
+def _semantic_error_class_line(segment: Segment) -> str | None:
+    classes = list(
+        dict.fromkeys(
+            str(issue.details["meaning_class"])
+            for issue in segment.validation_issues
+            if issue.code == "NOVEL_TERM_MISTRANSLATION"
+            and issue.details.get("meaning_class")
         )
-        disallowed = ", ".join(hint.disallowed_korean[:6]) or "관련 없는 의미 범주"
-        lines.append(
-            f"- {hint.source}: 의미 범주={hint.meaning_class}; "
-            f"권장 문체={register}; 금지 의미/표현={disallowed}"
-        )
-    return lines
+    )
+    if not classes:
+        return None
+    bounded = classes[:3]
+    suffix = " 외" if len(classes) > len(bounded) else ""
+    return f"보존할 의미 범주: {', '.join(bounded)}{suffix}"
 
 
 def build_single_translation_prompt(
@@ -100,7 +76,6 @@ def build_single_translation_prompt(
     profile: dict[str, Any],
     *,
     mode: str = "single",
-    name_map: NovelJobNameMap | None = None,
 ) -> str:
     """Build the default HY-MT prompt without exposing program Segment identity."""
     if segment.status == SegmentStatus.VALID:
@@ -125,38 +100,6 @@ def build_single_translation_prompt(
         "번역문만 출력하고 설명, 머리말, 표식, Markdown 코드 블록을 출력하지 마십시오.",
     ]
     lines.extend(_profile_instructions(profile))
-    terminology_hints = matching_novel_term_hints(
-        segment.source, segment.source_language, profile
-    )
-    reference_context = segment.context_before + segment.context_after
-    register_hints = matching_novel_register_hints(
-        segment.source,
-        segment.source_language,
-        profile,
-        context=reference_context,
-    )
-    job_name_map = name_map or NovelJobNameMap.from_profile(profile)
-    name_hints = job_name_map.matching(segment.source, segment.source_language)
-    if terminology_hints:
-        lines.append("용어 의미 참고(현재 원문에 실제 등장한 항목만):")
-        lines.extend(
-            f"- {hint.source}: 의미 범주={hint.meaning_class}; {hint.prompt_hint}"
-            for hint in terminology_hints
-        )
-    if register_hints:
-        lines.append("장르 문체 참고(현재 원문에 실제 등장한 항목만):")
-        lines.extend(
-            f"- {', '.join(hint.matched_source_terms(segment.source))}: "
-            f"{hint.notes} 권장 문체={hint.preferred_register}; "
-            f"자연스러운 후보(문맥에 따라 선택)={', '.join(hint.preferred_korean)}."
-            for hint in register_hints
-        )
-    if name_hints:
-        lines.append("이름 참고(현재 원문에 실제 등장한 이름만):")
-        lines.extend(
-            f"- {hint.source}: 이 작업에서는 '{hint.korean}'로 일관되게 표기한다."
-            for hint in name_hints
-        )
     lines.extend(
         [
             "<<<REFERENCE_CONTEXT>>>",
@@ -185,11 +128,9 @@ def build_single_translation_prompt(
             )
             if hints:
                 lines.append(f"수정 지침: {' '.join(hints)}")
-            lines.extend(
-                _semantic_repair_lines(
-                    segment, terminology_hints, register_hints
-                )
-            )
+            semantic_line = _semantic_error_class_line(segment)
+            if semantic_line is not None:
+                lines.append(semantic_line)
 
     lines.extend(
         [

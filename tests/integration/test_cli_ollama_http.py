@@ -52,6 +52,9 @@ class _OllamaHandler(BaseHTTPRequestHandler):
             "「她回答了。」": "그녀는 대답했다.",
             "她触碰阴蒂。": "그녀는 클리토리스를 만졌다.",
             "鱼鱼揉着自己的大腿。": "위위는 자신의 대퇴부를 쓰다듬었다.",
+            "[[NAME_0001]]揉着自己的大腿。": (
+                "[[NAME_0001]]는 자신의 대퇴부를 쓰다듬었다."
+            ),
         }
         if (
             source in type(self).fail_once_sources
@@ -201,7 +204,7 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    def test_round5_quote_normalization_and_source_term_hint_flow(self) -> None:
+    def test_round5_quote_normalization_and_validator_side_term_flow(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -248,7 +251,9 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                 first_prompt = _OllamaHandler.requests[0]["prompt"]
                 second_prompt = _OllamaHandler.requests[1]["prompt"]
                 self.assertNotIn("- 阴蒂:", first_prompt)
-                self.assertIn("- 阴蒂:", second_prompt)
+                self.assertNotIn("- 阴蒂:", second_prompt)
+                self.assertNotIn("용어 의미 참고", second_prompt)
+                self.assertNotIn("클리토리스", second_prompt)
                 self.assertTrue(
                     all(
                         "SEG_" not in request["prompt"]
@@ -267,7 +272,7 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    def test_round5_1_register_risk_and_job_name_hint_flow(self) -> None:
+    def test_round6_register_risk_and_job_mapping_flow(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -280,6 +285,18 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                 input_path = temp / "input.txt"
                 input_path.write_text(
                     "鱼鱼揉着自己的大腿。", encoding="utf-8"
+                )
+                mapping_path = temp / "mapping.json"
+                mapping_path.write_text(
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "names": {"鱼鱼": "위위"},
+                            "mappings": {},
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
                 )
 
                 config = json.loads(
@@ -302,6 +319,8 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                             str(config_path),
                             "--mode",
                             "novel",
+                            "--mapping",
+                            str(mapping_path),
                         ]
                     ),
                     0,
@@ -312,11 +331,14 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(len(_OllamaHandler.requests), 1)
                 prompt = _OllamaHandler.requests[0]["prompt"]
-                self.assertIn("- 鱼鱼:", prompt)
-                self.assertIn("'위위'", prompt)
-                self.assertIn("장르 문체 참고", prompt)
+                self.assertIn("[[NAME_0001]]", prompt)
+                self.assertNotIn("鱼鱼", prompt)
+                self.assertNotIn("위위", prompt)
+                self.assertNotIn("장르 문체 참고", prompt)
+                self.assertNotIn("용어 의미 참고", prompt)
+                self.assertNotIn("이름 참고", prompt)
                 self.assertIn("大腿", prompt)
-                self.assertIn("허벅지", prompt)
+                self.assertNotIn("허벅지", prompt)
                 self.assertNotIn("SEG_", prompt)
                 self.assertNotIn("ADULT_", prompt)
 
@@ -326,6 +348,25 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                 self.assertEqual(report["summary"]["valid"], 1)
                 self.assertEqual(report["summary"]["failed"], 0)
                 self.assertEqual(report["summary"]["risks"], 1)
+
+                # The mapping is recovered from checkpoint metadata when omitted.
+                self.assertEqual(
+                    run(
+                        [
+                            str(input_path),
+                            "--config",
+                            str(config_path),
+                            "--mode",
+                            "novel",
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(len(_OllamaHandler.requests), 1)
+                resumed_report = json.loads(
+                    (temp / "input.qa.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(resumed_report["summary"]["resumed"], 1)
         finally:
             server.shutdown()
             server.server_close()

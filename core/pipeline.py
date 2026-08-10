@@ -8,7 +8,7 @@ from core.checkpoint import CheckpointStore
 from core.config import AppConfig
 from core.diagnostics import FailureDebugStore
 from core.language import detect_language
-from core.novel_register import NovelJobNameMap
+from core.mappings import JobMappings
 from core.parser import SingleTranslationParser
 from core.placeholders import PlaceholderEngine
 from core.recovery import RecoveryEngine
@@ -42,6 +42,7 @@ class TranslationPipeline:
         checkpoint: CheckpointStore | None = None,
         progress: Callable[[str], None] | None = None,
         failure_debug: FailureDebugStore | None = None,
+        job_mappings: JobMappings | None = None,
     ) -> None:
         self.config = config
         self.profile = profile
@@ -49,12 +50,13 @@ class TranslationPipeline:
         self.checkpoint = checkpoint
         self.progress = progress or (lambda _message: None)
         self.failure_debug = failure_debug
+        self.job_mappings = job_mappings or JobMappings()
         self.placeholder_engine = PlaceholderEngine(
             config.placeholders.custom_patterns,
             protect_internal_newlines=config.placeholders.protect_internal_newlines,
+            job_mappings=self.job_mappings,
         )
         self.parser = SingleTranslationParser()
-        self.name_map = NovelJobNameMap.from_profile(profile)
         self.validator = ValidationCoordinator(
             config.validators, self.placeholder_engine, profile
         )
@@ -114,7 +116,6 @@ class TranslationPipeline:
             on_validated=(
                 self.failure_debug.clear if self.failure_debug is not None else None
             ),
-            name_map=self.name_map,
         )
         self.progress(
             f"총 {len(segments)}개 문단: 재개 {resumed}, 한국어 유지 {already_korean}, 번역 대상 {len(pending)}"

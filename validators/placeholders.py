@@ -72,32 +72,33 @@ def validate_restored_tokens(text: str, tokens: list[ProtectedToken]) -> Validat
     """Conservatively revalidate protected values loaded from a final checkpoint."""
     result = ValidationResult()
     ordered = sorted(tokens, key=lambda token: token.order)
-    expected_counts = Counter(token.original for token in ordered)
+    expected_counts = Counter(token.restored_value for token in ordered)
 
-    for original, expected_count in expected_counts.items():
-        actual_count = text.count(original)
+    for restored_value, expected_count in expected_counts.items():
+        actual_count = text.count(restored_value)
         if actual_count != expected_count:
             result.add(
                 "RESTORED_TOKEN_COUNT_MISMATCH",
                 ValidationSeverity.ERROR,
-                "A protected original value is missing or duplicated in checkpoint text",
+                "A protected or mapped value is missing or duplicated in checkpoint text",
                 "placeholders",
-                original=original,
+                value=restored_value,
                 expected=expected_count,
                 actual=actual_count,
             )
 
     cursor = 0
     for token in ordered:
-        position = text.find(token.original, cursor)
+        restored_value = token.restored_value
+        position = text.find(restored_value, cursor)
         if position < 0:
             result.add(
                 "RESTORED_TOKEN_ORDER_MISMATCH",
                 ValidationSeverity.ERROR,
-                "Protected original values are not in their source order",
+                "Protected or mapped values are not in their source order",
                 "placeholders",
-                original=token.original,
+                value=restored_value,
             )
             break
-        cursor = position + len(token.original)
+        cursor = position + len(restored_value)
     return result

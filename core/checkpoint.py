@@ -168,6 +168,14 @@ class CheckpointStore:
         ).fetchone()
         return int(row["count"])
 
+    def segment_count(self) -> int:
+        if not self.enabled or self._connection is None:
+            return 0
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS count FROM segments"
+        ).fetchone()
+        return int(row["count"])
+
     def set_metadata(self, key: str, value: str) -> None:
         if not self.enabled or self._connection is None:
             return

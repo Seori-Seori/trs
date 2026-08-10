@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "language": "zh",
+  "semantic_guards": [
+    {
+      "source_terms": ["阴蒂", "陰蒂"],
+      "meaning_class": "clitoris",
+      "meaning": "여성의 클리토리스/음핵",
+      "conflicting_korean": ["음경", "남근", "자지"],
+      "guarded_korean": ["클리토리스", "음핵"],
+      "exception_source_terms": ["阴茎", "陰莖", "龟头", "龜頭", "鸡巴", "雞巴", "肉棒", "阳具", "陽具"]
+    },
+    {
+      "source_terms": ["爱液", "愛液"],
+      "meaning_class": "female_arousal_fluid",
+      "meaning": "여성의 흥분성 분비액/애액",
+      "conflicting_korean": ["정액", "사정액"],
+      "guarded_korean": ["애액", "분비액"],
+      "exception_source_terms": ["精液", "精子", "射精"]
+    },
+    {
+      "source_terms": ["内裤", "內褲"],
+      "meaning_class": "underwear",
+      "meaning": "속옷/팬티",
+      "conflicting_korean": ["내복"],
+      "guarded_korean": ["속옷", "팬티"],
+      "exception_source_terms": ["秋裤", "秋褲", "保暖内衣", "保暖內衣", "棉毛裤", "棉毛褲"]
+    },
+    {
+      "source_terms": ["主卧", "主臥"],
+      "meaning_class": "main_bedroom",
+      "meaning": "안방/주 침실",
+      "conflicting_korean": ["주방", "부엌", "키친"],
+      "guarded_korean": ["안방", "주 침실", "메인 침실"],
+      "exception_source_terms": ["厨房", "廚房"]
+    },
+    {
+      "source_terms": ["阴户", "陰戶"],
+      "meaning_class": "external_female_genital",
+      "meaning": "여성 외부 성기",
+      "conflicting_korean": ["음경", "남근", "자지"],
+      "guarded_korean": ["음부", "외음부", "보지"],
+      "exception_source_terms": ["阴茎", "陰莖", "龟头", "龜頭", "鸡巴", "雞巴", "肉棒", "阳具", "陽具"]
+    },
+    {
+      "source_terms": ["骚屄", "騷屄"],
+      "meaning_class": "female_genital_vulgar",
+      "meaning": "강한 여성 성기 비속어",
+      "conflicting_korean": ["음경", "남근"],
+      "guarded_korean": ["보지"],
+      "exception_source_terms": ["阴茎", "陰莖", "龟头", "龜頭", "鸡巴", "雞巴", "肉棒", "阳具", "陽具"]
+    }
+  ]
+}

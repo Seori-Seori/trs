@@ -264,14 +264,13 @@ def load_profile(name_or_path: str | Path = "novel") -> dict[str, Any]:
     ):
         raise ConfigError("Profile cjk_residue_whitelist must be a string list")
     name_map = profile.get("name_map", {})
-    if not isinstance(name_map, dict) or not all(
-        isinstance(source, str)
-        and source.strip()
-        and isinstance(korean, str)
-        and korean.strip()
-        for source, korean in name_map.items()
-    ):
-        raise ConfigError("Profile name_map must map non-empty strings to strings")
+    if not isinstance(name_map, dict):
+        raise ConfigError("Profile name_map must be an object when present")
+    if name_map:
+        raise ConfigError(
+            "Work-specific profile name_map is not supported in Round 6; "
+            "provide a job-local --mapping JSON file instead"
+        )
     validation = profile.get("validation", {})
     if not isinstance(validation, dict):
         raise ConfigError("Profile validation policy must be a JSON object")

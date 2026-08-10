@@ -1,42 +1,38 @@
 from __future__ import annotations
 
-from typing import Any
-
 from core.segment import ValidationResult, ValidationSeverity
-from core.terminology import matching_novel_term_hints
+from core.terminology import matching_semantic_term_rules
 
 
-def validate_novel_terminology(
+def validate_semantic_terminology(
     source: str,
     translation: str,
     source_language: str,
-    profile: dict[str, Any] | None,
 ) -> ValidationResult:
-    """Reject only explicit, source-anchored catastrophic term mismatches."""
+    """Reject only reusable, source-anchored catastrophic meaning swaps."""
     result = ValidationResult()
-    for hint in matching_novel_term_hints(source, source_language, profile):
+    for rule in matching_semantic_term_rules(source, source_language):
         observed = [
-            term for term in hint.disallowed_korean if term in translation
+            term for term in rule.conflicting_korean if term in translation
         ]
         if not observed:
             continue
         exception_present = any(
-            term in source for term in hint.exception_source_terms
+            term in source for term in rule.exception_source_terms
         )
         guarded_meaning_present = any(
-            term in translation for term in hint.preferred_korean
+            term in translation for term in rule.guarded_korean
         )
         if exception_present and guarded_meaning_present:
             continue
         result.add(
             "NOVEL_TERM_MISTRANSLATION",
             ValidationSeverity.ERROR,
-            f"Source term {hint.source!r} was mapped to a disallowed meaning class",
+            "A source concept was mapped to a conflicting semantic class",
             "terminology",
-            source_term=hint.source,
-            meaning_class=hint.meaning_class,
-            meaning=hint.meaning,
+            source_terms=list(rule.matched_source_terms(source)),
+            meaning_class=rule.meaning_class,
+            meaning=rule.meaning,
             disallowed_matches=observed,
-            preferred_korean=list(hint.preferred_korean),
         )
     return result

@@ -22,9 +22,9 @@ TXT
  -> TextAdapter
  -> Segment[]
  -> language detection
- -> placeholder protection
+ -> built-in + optional job-local mapped placeholder protection
  -> context build
- -> source-triggered novel terminology/register/name hints
+ -> minimal mode/language prompt
  -> HY-MT native single-Segment request (internal ID is not exposed)
  -> Ollama translation text
  -> parse once
@@ -138,11 +138,27 @@ backup/novel.*.txt    실행 전 원본 백업
 --output PATH
 --mode novel|game|document
 --profile NAME|PATH
+--mapping PATH
 --resume / --no-resume
 --debug-failures
 ```
 
 `--profile`은 선택한 모드의 기본 프로필을 바꾸는 고급 옵션이다.
+`--mapping`은 작품별로 반드시 고정해야 하는 명시적 이름/표기만 담는 선택 옵션이다.
+자동으로 이름을 발견하거나 저장소 기본값으로 특정 작품의 이름을 강제하지 않는다.
+
+```json
+{
+  "version": 1,
+  "names": {"源": "한국어 이름"},
+  "mappings": {"FIXED_TERM": "고정 표기"}
+}
+```
+
+매핑된 원문은 모델에 `[[NAME_0001]]` 또는 `[[MAP_0001]]`로만 전달되고 Python이
+검증 뒤 목표 표기를 복원한다. 사용한 매핑과 해시는 checkpoint에 저장되며 같은 작업의
+resume에서는 생략해도 재사용된다. 다른 매핑으로 resume하면 거부되므로 새 매핑을
+적용하려면 `--no-resume`으로 작업을 명시적으로 다시 시작한다.
 `--debug-failures`는 실패한 단일 요청의 bounded source/prompt/원시 응답과 최종
 오류 코드를 `<입력명>.seori-debug.json`에 기록한다. 성공 응답은 기록하지 않는다.
 
@@ -161,9 +177,12 @@ backup/novel.*.txt    실행 전 원본 백업
 - repair 프롬프트에는 원문·문맥·검증 실패 코드만 포함하며 깨진 번역을 기준으로 삼지 않는다.
 - 일반 Segment는 설정된 단건 재시도 횟수를 소진하면 FAILED가 되며, 긴 Segment만 안전한 자식 조각으로 분할한다.
 - placeholder 값·개수·순서가 틀리면 원래 위치를 추정하지 않고 실패 처리한다.
-- `novel` 중국어 원문은 현재 Segment에 실제 등장한 용어 힌트만 prompt에 추가하며 결과 문자열을 사후 치환하지 않는다.
+- 기본 prompt에는 용어집, 후보 번역, 금지어, 작품별 이름 목록을 넣지 않는다.
+- Class A의 명시적 고정 매핑만 작업별 typed placeholder로 보호하며 개수·중복·순서를 정확히 검증한다.
+- Class B의 안정적인 의미 범주 규칙은 validator에서만 사용하고 prompt glossary로 주입하지 않는다.
+- Class C의 문맥 의존 비속어·은유는 전역 치환이나 전역 hard ERROR로 처리하지 않는다.
 - `novel`은 객관적 의미 범주 오류(ERROR)와 임상적이지만 이해 가능한 문체 불일치(RISK)를 분리한다.
-- 문체 RISK만 있는 Segment는 즉시 VALID/checkpoint하며, 설정된 작업 이름 매핑도 현재 원문에 이름이 있을 때만 prompt에 넣는다.
+- 문체 RISK만 있는 Segment는 재번역하지 않고 즉시 VALID/checkpoint한다.
 - `novel`의 비보호 잔류 한자와 명백한 한국어 중간 절단은 ERROR로 처리해 해당 Segment만 repair한다.
 - 원문 전체를 감싼 인용부호 한 쌍만 빠진 경우에 한해 Python이 같은 바깥 쌍을 결정적으로 복원한다. 내부 인용부호나 괄호 내용 손실은 자동 복원하지 않는다.
 - 넓은 부정·방향·상태 RISK는 보수적으로 표시하며 RISK만 있는 Segment는 재번역하지 않는다.
@@ -183,6 +202,7 @@ python -m unittest discover -s tests -v
 ```
 
 `tests/regression/test_regression_cases.py`에는 레거시 parser 호환 회귀를 포함해
-`R01`부터 Round 5.1 소설 문체 강화의 `R66`까지 각각의 회귀 테스트가 존재한다.
+`R01`부터 Round 6 일반화 재설계의 `R82`까지 각각의 회귀 테스트가 존재한다.
+현재 전체 표준 테스트 120개가 결정적으로 통과한다.
 통합 테스트는 로컬 임시 HTTP 서버로 Ollama API 계약을 재현하여
 `main.py input.txt`부터 백업, 한국어 TXT, SQLite, QA JSON 생성까지 검증한다.

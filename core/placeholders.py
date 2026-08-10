@@ -4,11 +4,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .mappings import JobMappings
 from .segment import ProtectedToken
 
 
 PLACEHOLDER_LIKE_RE = re.compile(r"\[\[[A-Za-z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)*\]\]")
-GENERATED_PLACEHOLDER_RE = re.compile(r"\[\[PH_\d{4,}\]\]")
+GENERATED_PLACEHOLDER_RE = re.compile(r"\[\[(?:PH|NAME|MAP)_\d{4,}\]\]")
 
 
 class PlaceholderError(ValueError):
@@ -28,16 +29,27 @@ class _PatternSpec:
     priority: int
 
 
+@dataclass(frozen=True)
+class _ProtectedSpan:
+    start: int
+    end: int
+    kind: str
+    mapped_target: str | None = None
+    placeholder_prefix: str = "PH"
+
+
 class PlaceholderEngine:
     def __init__(
         self,
         custom_patterns: Iterable[Any] | None = None,
         *,
         protect_internal_newlines: bool = True,
+        job_mappings: JobMappings | None = None,
     ) -> None:
         self._patterns = self._build_patterns(
             list(custom_patterns or []), protect_internal_newlines=protect_internal_newlines
         )
+        self._mapping_entries = tuple((job_mappings or JobMappings()).entries)
 
     @staticmethod
     def _build_patterns(
@@ -98,26 +110,58 @@ class PlaceholderEngine:
             priority += 1
         return specs
 
-    def protected_spans(self, source: str) -> list[tuple[int, int, str]]:
-        candidates: list[tuple[int, int, int, str]] = []
+    def _selected_spans(self, source: str) -> list[_ProtectedSpan]:
+        candidates: list[
+            tuple[int, int, int, str, str | None, str]
+        ] = []
         for spec in self._patterns:
             for match in spec.regex.finditer(source):
                 if match.start() == match.end():
                     continue
-                candidates.append((match.start(), match.end(), spec.priority, spec.kind))
+                candidates.append(
+                    (match.start(), match.end(), spec.priority, spec.kind, None, "PH")
+                )
+
+        mapping_priority = len(self._patterns)
+        for offset, entry in enumerate(self._mapping_entries):
+            start = 0
+            while True:
+                start = source.find(entry.source, start)
+                if start < 0:
+                    break
+                end = start + len(entry.source)
+                candidates.append(
+                    (
+                        start,
+                        end,
+                        mapping_priority + offset,
+                        f"mapped_{entry.kind}",
+                        entry.target,
+                        entry.placeholder_prefix,
+                    )
+                )
+                start += 1
         candidates.sort(key=lambda item: (item[0], -(item[1] - item[0]), item[2]))
 
-        selected: list[tuple[int, int, str]] = []
+        selected: list[_ProtectedSpan] = []
         occupied_until = -1
-        for start, end, _priority, kind in candidates:
+        for start, end, _priority, kind, mapped_target, prefix in candidates:
             if start < occupied_until:
                 continue
-            selected.append((start, end, kind))
+            selected.append(
+                _ProtectedSpan(start, end, kind, mapped_target, prefix)
+            )
             occupied_until = end
         return selected
 
+    def protected_spans(self, source: str) -> list[tuple[int, int, str]]:
+        return [
+            (span.start, span.end, span.kind)
+            for span in self._selected_spans(source)
+        ]
+
     def protect(self, source: str) -> PreparedText:
-        spans = self.protected_spans(source)
+        spans = self._selected_spans(source)
         if not spans:
             return PreparedText(source, [])
 
@@ -126,27 +170,29 @@ class PlaceholderEngine:
         tokens: list[ProtectedToken] = []
         pieces: list[str] = []
         cursor = 0
-        number = 1
+        numbers = {"PH": 1, "NAME": 1, "MAP": 1}
 
-        for order, (start, end, kind) in enumerate(spans, start=1):
-            pieces.append(source[cursor:start])
+        for order, span in enumerate(spans, start=1):
+            pieces.append(source[cursor:span.start])
+            prefix = span.placeholder_prefix
             while True:
-                placeholder = f"[[PH_{number:04d}]]"
-                number += 1
+                placeholder = f"[[{prefix}_{numbers[prefix]:04d}]]"
+                numbers[prefix] += 1
                 if placeholder not in used:
                     break
             used.add(placeholder)
-            original = source[start:end]
+            original = source[span.start:span.end]
             tokens.append(
                 ProtectedToken(
                     placeholder=placeholder,
                     original=original,
-                    kind=kind,
+                    kind=span.kind,
                     order=order,
+                    mapped_target=span.mapped_target,
                 )
             )
             pieces.append(placeholder)
-            cursor = end
+            cursor = span.end
         pieces.append(source[cursor:])
         return PreparedText("".join(pieces), tokens)
 
@@ -169,7 +215,7 @@ class PlaceholderEngine:
                 raise PlaceholderError(
                     f"Placeholder {token.placeholder} must occur exactly once before restoration"
                 )
-            restored = restored.replace(token.placeholder, token.original, 1)
+            restored = restored.replace(token.placeholder, token.restored_value, 1)
         return restored
 
     def round_trip(self, source: str) -> bool:

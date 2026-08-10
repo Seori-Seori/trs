@@ -17,7 +17,7 @@ from validators.structure import (
     validate_structure,
     validate_text_structure,
 )
-from validators.terminology import validate_novel_terminology
+from validators.terminology import validate_semantic_terminology
 
 
 @dataclass
@@ -97,16 +97,16 @@ class ValidationCoordinator:
                         novel_mode=self.novel_mode,
                         cjk_whitelist=self.cjk_whitelist,
                         protected_values=[
-                            token.original for token in segment.protected_tokens
+                            token.restored_value
+                            for token in segment.protected_tokens
                         ],
                     )
                 )
                 result.extend(
-                    validate_novel_terminology(
+                    validate_semantic_terminology(
                         segment.source,
                         candidate,
                         segment.source_language,
-                        self.profile,
                     )
                 )
                 result.extend(
@@ -165,16 +165,15 @@ class ValidationCoordinator:
                 novel_mode=self.novel_mode,
                 cjk_whitelist=self.cjk_whitelist,
                 protected_values=[
-                    token.original for token in segment.protected_tokens
+                    token.restored_value for token in segment.protected_tokens
                 ],
             )
         )
         result.extend(
-            validate_novel_terminology(
+            validate_semantic_terminology(
                 segment.source,
                 translation,
                 segment.source_language,
-                self.profile,
             )
         )
         result.extend(

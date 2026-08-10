@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "names": {
+    "源氏名": "지정한 한국어 이름"
+  },
+  "mappings": {
+    "FIXED_ITEM_ID": "고정 아이템명"
+  }
+}

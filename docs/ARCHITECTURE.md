@@ -32,6 +32,7 @@ seori_translator/
 │  ├─ recovery.py
 │  ├─ diagnostics.py
 │  ├─ checkpoint.py
+│  ├─ mappings.py
 │  ├─ language.py
 │  ├─ placeholders.py
 │  ├─ terminology.py
@@ -53,8 +54,9 @@ seori_translator/
 │  └─ risk.py
 ├─ profiles/
 │  ├─ novel.json
-│  ├─ novel_zh_terms.json
+│  ├─ zh_language_pack.json
 │  └─ novel_register.json
+├─ mapping.example.json
 ├─ projects/
 ├─ output/
 ├─ backup/
@@ -104,6 +106,7 @@ class ProtectedToken:
     original: str
     kind: str
     order: int
+    mapped_target: str | None = None
 ```
 
 예:
@@ -112,9 +115,13 @@ class ProtectedToken:
 \N[1] -> [[PH_0001]]
 %PLAYER% -> [[PH_0002]]
 내부 줄바꿈 -> [[PH_0003]]
+작업별 이름 -> [[NAME_0001]]
+작업별 고정 표기 -> [[MAP_0001]]
 ```
 
-복원 전 반드시 placeholder의 값, 개수, 중복, 순서를 검증한다.
+복원 전 반드시 placeholder의 값, 개수, 중복, 순서를 검증한다. 일반 placeholder는
+`original`을 복원하고 작업별 mapped placeholder는 검증된 `mapped_target`을 복원한다.
+모델은 원문 이름과 목표 이름의 대응표를 보지 않는다.
 
 ## 5. 상태 머신
 
@@ -147,7 +154,7 @@ Adapter.load
  -> protect placeholders
  -> checkpoint lookup
  -> context build
- -> select source-triggered novel terminology/register/name hints
+ -> build minimal mode/language instructions
  -> build native single-Segment prompt without exposing internal ID
  -> translator.translate text only
  -> parse/interpret response ONCE as the known Segment candidate
@@ -156,7 +163,7 @@ Adapter.load
  -> placeholder validation
  -> deterministic full-span outer quote normalization when unambiguous
  -> risk detection
- -> novel CJK / truncation / source-anchored terminology validation
+ -> CJK / truncation / source-anchored semantic-category validation
  -> source-anchored novel register RISK validation
  -> accept valid segments immediately
  -> checkpoint valid segments immediately
@@ -168,11 +175,17 @@ Adapter.load
 ```
 
 정상 Segment를 실패 Segment와 함께 다시 모델에 보내면 안 된다.
-용어 데이터는 현재 immutable source에 실제로 등장한 항목만 prompt에 포함하며, 최종
-번역문에 대한 전역 문자열 치환에는 사용하지 않는다.
-객관적인 의미 범주 오류만 ERROR repair 대상으로 삼고, 의미는 안전하지만 임상적이거나
-딱딱한 장르 문체 불일치는 `NOVEL_REGISTER_MISMATCH` RISK로 남겨 자동 재시도하지 않는다.
-작업 이름 매핑은 profile에서 한 번 구성하고 현재 source에 해당 이름이 있는 요청에만 전달한다.
+기본 prompt에는 용어·register·이름 후보나 금지어 목록을 넣지 않는다. 한두 문장의 짧은
+mode 정책과 언어 계약만 사용한다.
+
+- Class A: 사용자가 작업별 mapping 파일에 명시한 고정 이름/표기만 typed placeholder로 보호한다.
+- Class B: 언어 공통의 고신뢰 의미 범주 충돌만 validator-side language pack으로 검사한다.
+- Class C: 문맥 의존 비속어·은유는 결정적 치환이나 전역 hard ERROR로 처리하지 않는다.
+
+객관적인 Class B 의미 범주 오류만 ERROR repair 대상으로 삼고, 의미는 안전하지만
+임상적이거나 딱딱한 장르 문체 불일치는 `NOVEL_REGISTER_MISMATCH` RISK로 남겨 자동
+재시도하지 않는다. repair prompt에는 source, context, 오류 분류와 최대 3개의 짧은
+의미 범주만 포함하고 깨진 번역·후보 사전·내부 ID를 넣지 않는다.
 
 ## 7. v6에서 반드시 계승할 동작
 
@@ -241,8 +254,8 @@ ERROR
 - ERROR: 자동 복구 대상
 - RISK: 번역을 반드시 폐기하지 않음. QA report/선택적 semantic QA 대상
 
-소설 모드에서는 비보호 잔류 한자, 보수적으로 확정 가능한 문장 절단, 명시적인
-source-anchored 용어 범주 오역을 ERROR로 처리한다. 원문 전체를 감싼 인용부호 한
+비보호 잔류 한자, 보수적으로 확정 가능한 문장 절단, 명시적인 source-anchored
+Class B 의미 범주 오역을 ERROR로 처리한다. 원문 전체를 감싼 인용부호 한
 쌍만 누락된 경우에는 같은 쌍만 복원할 수 있지만 내부 인용부호·괄호 안 의미 손실은
 모델 repair 없이 추정 복원하지 않는다.
 소설 문체 validator는 알려진 구어·비속어·완곡어 source와 과도한 임상 표현이 함께
@@ -293,6 +306,10 @@ updated_at
 재개 시 `source_hash`와 상태를 확인한다.
 
 `VALID` + 동일 source hash이면 모델을 호출하지 않는다.
+
+선택적 job mapping은 정규화된 JSON과 SHA-256을 checkpoint metadata에 함께 저장한다.
+resume에서 mapping 인자를 생략하면 저장된 값을 재사용하고, 값이 달라졌으면 조용히
+혼합하지 않고 실행을 거부한다. `--no-resume`만 새 mapping으로 작업을 다시 시작할 수 있다.
 
 ## 14. 확장 방향
 

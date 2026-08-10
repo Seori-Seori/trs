@@ -7,12 +7,18 @@ from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
+from adapters.text import TextAdapter
 from core.checkpoint import CheckpointStore
-from core.config import load_config, load_profile
+from core.config import ConfigError, load_config, load_profile
 from core.diagnostics import FailureDebugStore
+from core.mappings import (
+    JobMappingError,
+    JobMappings,
+    resolve_job_mappings,
+)
 from core.parser import ResponseParser, SingleTranslationParser
 from core.pipeline import PipelineResult, TranslationPipeline
-from core.placeholders import PlaceholderEngine
+from core.placeholders import PlaceholderEngine, PlaceholderError
 from core.prompting import build_single_translation_prompt
 from core.recovery import RecoveryEngine
 from core.reporting import build_qa_report
@@ -588,8 +594,8 @@ class MandatoryRegressionCases(unittest.TestCase):
     def test_r40_novel_adult_intensity_instruction_survives(self) -> None:
         segment = self._prepared_segments(1)[0]
         prompt = build_single_translation_prompt(segment, load_profile("novel"))
-        self.assertIn("원문의 의미를 임의로 순화하거나 강화하지 않는다.", prompt)
-        self.assertIn("성인 표현도 원문의 강도를 유지한다.", prompt)
+        self.assertIn("임의로 순화하거나 강화하지 않으며", prompt)
+        self.assertIn("비속함·완곡함·장난스러움·노골성", prompt)
 
     def test_r41_terminal_failure_retains_bounded_native_exchange(self) -> None:
         segment = self._prepared_segments(1)[0]
@@ -864,14 +870,14 @@ class MandatoryRegressionCases(unittest.TestCase):
             "TRUNCATED_OUTPUT", [issue.code for issue in item.result.issues]
         )
 
-    def test_r50_terminology_hints_are_source_triggered(self) -> None:
+    def test_r50_terminology_guards_do_not_expand_normal_prompt(self) -> None:
         segment = self._prepared_zh("她的阴蒂贴着内裤。")
         prompt = build_single_translation_prompt(segment, self.profile)
 
-        self.assertIn("- 阴蒂:", prompt)
-        self.assertIn("- 内裤:", prompt)
-        self.assertNotIn("- 爱液:", prompt)
-        self.assertNotIn("- 主卧:", prompt)
+        self.assertNotIn("용어 의미 참고", prompt)
+        self.assertNotIn("클리토리스", prompt)
+        self.assertNotIn("속옷", prompt)
+        self.assertNotIn("금지 의미", prompt)
 
     def test_r51_term_hints_have_no_ids_or_unrelated_dictionary(self) -> None:
         segment = self._prepared_zh("她走进房间。", "ADULT_00000051")
@@ -978,14 +984,14 @@ class MandatoryRegressionCases(unittest.TestCase):
             [issue.code for issue in precise_negation.issues],
         )
 
-    def test_r56_colloquial_source_gets_natural_register_guidance(self) -> None:
+    def test_r56_colloquial_source_gets_only_global_register_policy(self) -> None:
         segment = self._prepared_zh("她挺起丰满的奶子，故意贴近他。")
         prompt = build_single_translation_prompt(segment, self.profile)
 
-        self.assertIn("장르 문체 참고", prompt)
-        self.assertIn("奶子", prompt)
-        self.assertIn("가슴", prompt)
-        self.assertIn("natural_korean_genre_fiction", prompt)
+        self.assertIn("자연스러운 한국 장르소설 문체", prompt)
+        self.assertNotIn("장르 문체 참고", prompt)
+        self.assertNotIn("가슴", prompt)
+        self.assertNotIn("natural_korean_genre_fiction", prompt)
 
     def test_r57_explicit_medical_context_allows_anatomical_korean(self) -> None:
         segment = self._prepared_zh("医生向患者解释阴户的解剖结构。")
@@ -1002,28 +1008,17 @@ class MandatoryRegressionCases(unittest.TestCase):
             [issue.code for issue in item.result.issues],
         )
 
-    def test_r58_register_and_name_hints_are_source_triggered(self) -> None:
+    def test_r58_register_and_name_prompt_hints_are_retired(self) -> None:
         thigh = self._prepared_zh("她揉着自己的大腿。")
         thigh_prompt = build_single_translation_prompt(thigh, self.profile)
         self.assertIn("大腿", thigh_prompt)
-        self.assertIn("허벅지", thigh_prompt)
-        self.assertNotIn("本小姐", thigh_prompt)
+        self.assertNotIn("허벅지", thigh_prompt)
+        self.assertNotIn("장르 문체 참고", thigh_prompt)
 
         named = self._prepared_zh("鱼鱼笑了。", "SEG_00000058")
         named_prompt = build_single_translation_prompt(named, self.profile)
-        self.assertIn("이 작업에서는 '위위'", named_prompt)
-
-        overridden_profile = json.loads(json.dumps(self.profile))
-        overridden_profile["name_map"]["鱼鱼"] = "유유"
-        overridden_prompt = build_single_translation_prompt(
-            named, overridden_profile
-        )
-        self.assertIn("이 작업에서는 '유유'", overridden_prompt)
-        self.assertNotIn("이 작업에서는 '위위'", overridden_prompt)
-
-        unnamed = self._prepared_zh("她笑了。", "SEG_00000058_NO_NAME")
-        unnamed_prompt = build_single_translation_prompt(unnamed, self.profile)
-        self.assertNotIn("이 작업에서는 '위위'", unnamed_prompt)
+        self.assertNotIn("이름 참고", named_prompt)
+        self.assertNotIn("위위", named_prompt)
 
     def test_r59_unrelated_segment_gets_no_global_register_glossary(self) -> None:
         segment = self._prepared_zh("她走进房间。")
@@ -1108,17 +1103,18 @@ class MandatoryRegressionCases(unittest.TestCase):
             [issue.code for issue in item.result.issues],
         )
 
-    def test_r64_known_euphemism_cannot_become_literal_object(self) -> None:
+    def test_r64_context_dependent_euphemism_is_not_hard_replaced(self) -> None:
         segment = self._prepared_zh("她轻轻抚摸自己的花壶。")
+        translation = "그녀는 자신의 화분을 가볍게 쓰다듬었다."
         item = ValidationCoordinator(
             self.config.validators, self.engine, self.profile
         ).evaluate_single(
-            SingleTranslationParser().parse("그녀는 자신의 화분을 가볍게 쓰다듬었다."),
+            SingleTranslationParser().parse(translation),
             segment,
         ).by_segment_id[segment.id]
 
-        self.assertIsNone(item.translation)
-        self.assertIn(
+        self.assertEqual(item.translation, translation)
+        self.assertNotIn(
             "NOVEL_TERM_MISTRANSLATION",
             [issue.code for issue in item.result.issues],
         )
@@ -1156,8 +1152,8 @@ class MandatoryRegressionCases(unittest.TestCase):
 
         def repair(prompt: str) -> str:
             self.assertIn("NOVEL_TERM_MISTRANSLATION", prompt)
-            self.assertIn("의미 범주=main_bedroom", prompt)
-            self.assertIn("금지 의미/표현", prompt)
+            self.assertIn("보존할 의미 범주: main_bedroom", prompt)
+            self.assertNotIn("금지 의미/표현", prompt)
             self.assertNotIn("그녀는 주방으로 돌아갔다.", prompt)
             self.assertNotIn(first.id, prompt)
             self.assertNotIn(second.id, prompt)
@@ -1189,6 +1185,336 @@ class MandatoryRegressionCases(unittest.TestCase):
         self.assertEqual(second.attempt_count, 2)
         self.assertTrue(second.was_repaired)
         self.assertEqual(len(translator.calls), 3)
+
+    def test_r67_default_single_prompt_is_minimal(self) -> None:
+        segment = self._prepared_zh("鱼鱼揉着奶子回到主卧。")
+        prompt = build_single_translation_prompt(segment, self.profile)
+
+        self.assertNotIn("용어 의미 참고", prompt)
+        self.assertNotIn("장르 문체 참고", prompt)
+        self.assertNotIn("이름 참고", prompt)
+        self.assertNotIn("클리토리스", prompt)
+        self.assertNotIn("허벅지", prompt)
+        self.assertNotIn("안방", prompt)
+        self.assertLess(len(prompt.splitlines()), 25)
+
+    def test_r68_no_work_specific_default_names(self) -> None:
+        profile_path = ROOT / "profiles" / "novel.json"
+        raw = json.loads(profile_path.read_text(encoding="utf-8"))
+        self.assertFalse(raw.get("name_map", {}))
+        serialized = json.dumps(raw, ensure_ascii=False)
+        self.assertNotIn("鱼鱼", serialized)
+        self.assertNotIn("魚魚", serialized)
+
+        with tempfile.TemporaryDirectory() as directory:
+            custom_path = Path(directory) / "custom.json"
+            raw["name_map"] = {"鱼鱼": "위위"}
+            custom_path.write_text(
+                json.dumps(raw, ensure_ascii=False), encoding="utf-8"
+            )
+            with self.assertRaises(ConfigError):
+                load_profile(custom_path)
+
+    def test_r69_no_unrelated_dictionary_dump(self) -> None:
+        segment = self._prepared_zh("她走进陌生的房间。")
+        prompt = build_single_translation_prompt(segment, self.profile)
+
+        for unrelated in ("阴蒂", "爱液", "内裤", "主卧", "花壶"):
+            self.assertNotIn(unrelated, prompt)
+        self.assertNotIn("자연스러운 후보", prompt)
+        self.assertNotIn("금지 의미", prompt)
+
+    def test_r70_job_local_mapped_name_round_trip(self) -> None:
+        mappings = JobMappings.from_data(
+            {"version": 1, "names": {"鱼鱼": "위위"}, "mappings": {}}
+        )
+        engine = PlaceholderEngine(job_mappings=mappings)
+        segment = Segment("SEG_00000070", "鱼鱼笑了。", source_language="zh")
+        prepared = engine.protect(segment.source)
+        segment.prepare(prepared.text, prepared.tokens)
+
+        self.assertEqual(prepared.text, "[[NAME_0001]]笑了。")
+        self.assertEqual(prepared.tokens[0].mapped_target, "위위")
+
+        def translated(prompt: str) -> str:
+            self.assertEqual(native_prompt_source(prompt), prepared.text)
+            self.assertNotIn("鱼鱼", prompt)
+            self.assertNotIn("위위", prompt)
+            return "[[NAME_0001]]가 웃었다."
+
+        result = RecoveryEngine(
+            ScriptedTranslator([translated]),
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, engine, self.profile),
+            engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        ).translate_segment(segment)
+
+        self.assertFalse(result.failed)
+        self.assertEqual(segment.translation, "위위가 웃었다.")
+
+    def test_r71_mapped_placeholder_count_and_order_safety(self) -> None:
+        mappings = JobMappings.from_data(
+            {
+                "names": {"鱼鱼": "위위"},
+                "mappings": {"圣剑": "성검"},
+            }
+        )
+        engine = PlaceholderEngine(job_mappings=mappings)
+        prepared = engine.protect("鱼鱼拿着圣剑。")
+        name, item = [token.placeholder for token in prepared.tokens]
+
+        missing = validate_placeholders(name, prepared.tokens)
+        self.assertIn("MISSING_PLACEHOLDER", [issue.code for issue in missing.issues])
+
+        duplicate = validate_placeholders(
+            f"{name}{name}{item}", prepared.tokens
+        )
+        self.assertIn(
+            "DUPLICATE_PLACEHOLDER",
+            [issue.code for issue in duplicate.issues],
+        )
+
+        unexpected = validate_placeholders(
+            f"{name}{item}[[MAP_9999]]", prepared.tokens
+        )
+        self.assertIn(
+            "UNEXPECTED_PLACEHOLDER",
+            [issue.code for issue in unexpected.issues],
+        )
+
+        reversed_result = validate_placeholders(
+            f"{item}{name}", prepared.tokens
+        )
+        self.assertIn(
+            "PLACEHOLDER_ORDER_MISMATCH",
+            [issue.code for issue in reversed_result.issues],
+        )
+        with self.assertRaises(PlaceholderError):
+            engine.restore(f"{item}{name}", prepared.tokens)
+
+    def test_r72_same_source_name_may_differ_between_jobs(self) -> None:
+        first_engine = PlaceholderEngine(
+            job_mappings=JobMappings.from_data(
+                {"names": {"鱼鱼": "위위"}, "mappings": {}}
+            )
+        )
+        second_engine = PlaceholderEngine(
+            job_mappings=JobMappings.from_data(
+                {"names": {"鱼鱼": "유유"}, "mappings": {}}
+            )
+        )
+        first = first_engine.protect("鱼鱼笑了。")
+        second = second_engine.protect("鱼鱼笑了。")
+
+        self.assertEqual(first.text, second.text)
+        candidate = "[[NAME_0001]]가 웃었다."
+        self.assertEqual(
+            first_engine.restore(candidate, first.tokens), "위위가 웃었다."
+        )
+        self.assertEqual(
+            second_engine.restore(candidate, second.tokens), "유유가 웃었다."
+        )
+
+    def test_r73_absent_job_map_means_no_forced_canonicalization(self) -> None:
+        engine = PlaceholderEngine()
+        prepared = engine.protect("鱼鱼笑了。")
+        self.assertEqual(prepared.text, "鱼鱼笑了。")
+        self.assertEqual(prepared.tokens, [])
+
+        segment = self._prepared_zh("鱼鱼笑了。", "SEG_00000073")
+        prompt = build_single_translation_prompt(segment, self.profile)
+        self.assertIn("鱼鱼笑了。", prompt)
+        self.assertNotIn("위위", prompt)
+
+    def test_r74_class_b_rule_is_validator_side_not_prompt_glossary(self) -> None:
+        segment = self._prepared_zh("她回到主卧休息。", "SEG_00000074")
+        prompt = build_single_translation_prompt(segment, self.profile)
+        self.assertNotIn("안방", prompt)
+        self.assertNotIn("주방", prompt)
+        self.assertNotIn("용어 의미 참고", prompt)
+
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("그녀는 주방으로 돌아가 쉬었다."),
+            segment,
+        ).by_segment_id[segment.id]
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r75_class_c_slang_is_not_deterministic_replacement(self) -> None:
+        source = "她轻轻抚摸自己的花壶。"
+        engine = PlaceholderEngine()
+        prepared = engine.protect(source)
+        self.assertEqual(prepared.text, source)
+        self.assertFalse(
+            any(token.kind.startswith("mapped_") for token in prepared.tokens)
+        )
+
+        segment = self._prepared_zh(source, "SEG_00000075")
+        translation = "그녀는 자신의 화분을 가볍게 쓰다듬었다."
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(translation), segment
+        ).by_segment_id[segment.id]
+        self.assertEqual(item.translation, translation)
+
+    def test_r76_adult_novel_register_is_one_short_policy(self) -> None:
+        segment = self._prepared_zh("她靠近了他。", "SEG_00000076")
+        prompt = build_single_translation_prompt(segment, self.profile)
+        policy_lines = [
+            line
+            for line in prompt.splitlines()
+            if "비속함·완곡함·장난스러움·노골성" in line
+        ]
+        self.assertEqual(len(policy_lines), 1)
+        self.assertIn("임상·해부학", policy_lines[0])
+        self.assertNotIn("장르 문체 참고", prompt)
+        self.assertNotIn("자연스러운 후보", prompt)
+
+    def test_r77_medical_context_may_remain_clinical(self) -> None:
+        segment = self._prepared_zh(
+            "医生向患者解释奶子的解剖结构。", "SEG_00000077"
+        )
+        translation = "의사는 환자에게 유방의 해부학적 구조를 설명했다."
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(translation), segment
+        ).by_segment_id[segment.id]
+        self.assertEqual(item.translation, translation)
+        self.assertNotIn(
+            "NOVEL_REGISTER_MISMATCH",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r78_repair_prompt_remains_bounded(self) -> None:
+        segment = self._prepared_zh("她回到主卧。", "SEG_00000078")
+        bad_candidate = "그녀는 주방으로 돌아갔다."
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(bad_candidate), segment
+        ).by_segment_id[segment.id]
+        segment.validation_issues = list(item.result.issues)
+
+        prompt = build_single_translation_prompt(
+            segment, self.profile, mode="repair"
+        )
+        self.assertIn("NOVEL_TERM_MISTRANSLATION", prompt)
+        self.assertIn("보존할 의미 범주: main_bedroom", prompt)
+        self.assertNotIn(bad_candidate, prompt)
+        self.assertNotIn("용어 의미 참고", prompt)
+        self.assertNotIn("장르 문체 참고", prompt)
+        self.assertNotIn("자연스러운 후보", prompt)
+        self.assertNotIn("금지 의미", prompt)
+        self.assertNotIn(segment.id, prompt)
+        self.assertLess(len(prompt), 2500)
+
+    def test_r79_terminal_failure_still_falls_back_to_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            input_path = temp / "input.txt"
+            output_path = temp / "input.ko.txt"
+            input_path.write_text("她回到主卧。", encoding="utf-8")
+            adapter = TextAdapter()
+            document, segments = adapter.load(input_path)
+            translator = ScriptedTranslator(
+                ["그녀는 주방으로 돌아갔다."] * self.config.recovery.max_attempts
+            )
+            result = TranslationPipeline(
+                self.config, self.profile, translator
+            ).process(segments, resume=False)
+
+            self.assertEqual(segments[0].status, SegmentStatus.FAILED)
+            adapter.save(document, result.segments, output_path)
+            self.assertEqual(
+                output_path.read_text(encoding="utf-8"), segments[0].source
+            )
+
+    def test_r80_valid_resume_with_mapping_causes_zero_model_calls(self) -> None:
+        mappings = JobMappings.from_data(
+            {"names": {"鱼鱼": "위위"}, "mappings": {}}
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint_path = Path(directory) / "resume.sqlite"
+            first = Segment("SEG_00000080", "鱼鱼笑了。")
+            translator = ScriptedTranslator(["[[NAME_0001]]가 웃었다."])
+            with CheckpointStore(checkpoint_path) as checkpoint:
+                resolved = resolve_job_mappings(
+                    checkpoint, mappings, resume=False
+                )
+                result = TranslationPipeline(
+                    self.config,
+                    self.profile,
+                    translator,
+                    checkpoint,
+                    job_mappings=resolved,
+                ).process([first], resume=False)
+            self.assertFalse(result.failed)
+            self.assertEqual(first.translation, "위위가 웃었다.")
+
+            different = JobMappings.from_data(
+                {"names": {"鱼鱼": "유유"}, "mappings": {}}
+            )
+            with CheckpointStore(checkpoint_path) as checkpoint:
+                with self.assertRaises(JobMappingError):
+                    resolve_job_mappings(checkpoint, different, resume=True)
+                resumed_mapping = resolve_job_mappings(
+                    checkpoint, None, resume=True
+                )
+                same = Segment("SEG_00000080", "鱼鱼笑了。")
+                no_call = NoCallTranslator()
+                resumed = TranslationPipeline(
+                    self.config,
+                    self.profile,
+                    no_call,
+                    checkpoint,
+                    job_mappings=resumed_mapping,
+                ).process([same], resume=True)
+            self.assertEqual(resumed.resumed, 1)
+            self.assertEqual(no_call.calls, 0)
+            self.assertEqual(same.translation, "위위가 웃었다.")
+
+    def test_r81_game_mode_is_unaffected_by_novel_policy(self) -> None:
+        mappings = JobMappings.from_data(
+            {"names": {"勇者": "용사"}, "mappings": {}}
+        )
+        engine = PlaceholderEngine(job_mappings=mappings)
+        segment = Segment("SEG_00000081", "勇者 attacks!", source_language="zh")
+        prepared = engine.protect(segment.source)
+        segment.prepare(prepared.text, prepared.tokens)
+        prompt = build_single_translation_prompt(segment, load_profile("game"))
+
+        self.assertIn("[[NAME_0001]]", prompt)
+        self.assertNotIn("장르소설", prompt)
+        self.assertNotIn("비속함·완곡함", prompt)
+        self.assertNotIn("장르 문체 참고", prompt)
+        self.assertEqual(
+            engine.restore("[[NAME_0001]]가 공격한다!", prepared.tokens),
+            "용사가 공격한다!",
+        )
+
+    def test_r82_document_mode_is_unaffected_by_novel_policy(self) -> None:
+        profile = load_profile("document")
+        segment = Segment(
+            "SEG_00000082", "The report is complete.", source_language="en"
+        )
+        segment.prepare(segment.source, [])
+        prompt = build_single_translation_prompt(segment, profile)
+
+        self.assertIn("정보를 보존", prompt)
+        self.assertNotIn("장르소설", prompt)
+        self.assertNotIn("비속함·완곡함", prompt)
+        self.assertNotIn("임상·해부학", prompt)
+        self.assertNotIn("용어 의미 참고", prompt)
 
 
 if __name__ == "__main__":

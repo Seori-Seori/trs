@@ -32,6 +32,5 @@ def validate_novel_register(
             source_register=hint.source_register,
             preferred_register=hint.preferred_register,
             avoided_matches=observed,
-            preferred_korean=list(hint.preferred_korean),
         )
     return result
