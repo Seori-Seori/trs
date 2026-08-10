@@ -258,6 +258,11 @@ def load_profile(name_or_path: str | Path = "novel") -> dict[str, Any]:
         raise ConfigError("Profile root must be a JSON object")
     if profile.get("target_language", "ko") != "ko":
         raise ConfigError("Profile target_language is fixed to 'ko'")
+    cjk_whitelist = profile.get("cjk_residue_whitelist", [])
+    if not isinstance(cjk_whitelist, list) or not all(
+        isinstance(item, str) and item for item in cjk_whitelist
+    ):
+        raise ConfigError("Profile cjk_residue_whitelist must be a string list")
     validation = profile.get("validation", {})
     if not isinstance(validation, dict):
         raise ConfigError("Profile validation policy must be a JSON object")

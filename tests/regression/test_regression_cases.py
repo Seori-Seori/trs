@@ -64,6 +64,12 @@ class MandatoryRegressionCases(unittest.TestCase):
             segment.prepare(prepared.text, prepared.tokens)
         return segments
 
+    def _prepared_zh(self, source: str, segment_id: str = "SEG_00000001") -> Segment:
+        segment = Segment(segment_id, source, source_language="zh")
+        prepared = self.engine.protect(source)
+        segment.prepare(prepared.text, prepared.tokens)
+        return segment
+
     def test_r01_cjk_de_residue_is_error(self) -> None:
         result = validate_korean("彼は話した", "그는 말했的", "ja", self.config.validators)
         self.assertIn("KNOWN_BAD_CJK_RESIDUE", [issue.code for issue in result.issues])
@@ -653,6 +659,288 @@ class MandatoryRegressionCases(unittest.TestCase):
                 ).process([resumed_segment])
             self.assertEqual(result.resumed, 1)
             self.assertEqual(no_call.calls, 0)
+
+    def test_r43_full_span_outer_quote_is_restored_without_retry(self) -> None:
+        segment = self._prepared_zh("「她轻声回答了。」")
+        translator = ScriptedTranslator(["그녀는 조용히 대답했다."])
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+
+        result = recovery.translate_segment(segment)
+
+        self.assertFalse(result.failed)
+        self.assertEqual(segment.translation, "「그녀는 조용히 대답했다.」")
+        self.assertEqual(segment.attempt_count, 1)
+        self.assertEqual(len(translator.calls), 1)
+        self.assertIn(
+            "OUTER_QUOTE_RESTORED",
+            [issue.code for issue in segment.validation_issues],
+        )
+
+    def test_r44_inner_quote_loss_is_not_auto_restored(self) -> None:
+        segment = self._prepared_zh("她说「你好」，然后离开了。")
+        parsed = SingleTranslationParser().parse("그녀는 인사한 뒤 떠났다.")
+        evaluation = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment)
+        item = evaluation.by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "QUOTE_STRUCTURE_LOSS", [issue.code for issue in item.result.issues]
+        )
+        self.assertNotIn(
+            "OUTER_QUOTE_RESTORED", [issue.code for issue in item.result.issues]
+        )
+
+    def test_r45_parenthetical_content_loss_repairs_with_explicit_hint(self) -> None:
+        segment = self._prepared_zh("她说（必须保留这句话），然后离开了。")
+
+        def repair(prompt: str) -> str:
+            self.assertIn("BRACKET_STRUCTURE_LOSS", prompt)
+            self.assertIn("괄호 안 내용", prompt)
+            return "그녀는 (이 문장을 반드시 남겨야 한다고) 말한 뒤 떠났다."
+
+        translator = ScriptedTranslator(["그녀는 말한 뒤 떠났다.", repair])
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+
+        result = recovery.translate_segment(segment)
+
+        self.assertFalse(result.failed)
+        self.assertEqual(segment.attempt_count, 2)
+        self.assertTrue(segment.was_repaired)
+
+        empty_aside_segment = self._prepared_zh(
+            "她说（必须保留这句话），然后离开了。", "SEG_00000045"
+        )
+        empty_aside = SingleTranslationParser().parse(
+            "그녀는 () 말한 뒤 떠났다."
+        )
+        empty_item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(empty_aside, empty_aside_segment).by_segment_id[
+            empty_aside_segment.id
+        ]
+        self.assertIn(
+            "PARENTHETICAL_CONTENT_LOSS",
+            [issue.code for issue in empty_item.result.issues],
+        )
+
+    def test_r46_novel_residual_cjk_mixed_string_is_error(self) -> None:
+        segment = self._prepared_zh("她走进主卧。")
+        parsed = SingleTranslationParser().parse("그녀는 주卧에 들어갔다.")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_CJK_RESIDUE", [issue.code for issue in item.result.issues]
+        )
+
+    def test_r47_source_backed_cjk_whitelist_is_configurable(self) -> None:
+        profile = json.loads(json.dumps(self.profile))
+        profile["cjk_residue_whitelist"] = ["龍門"]
+        segment = self._prepared_zh("她抵达了龍門。")
+        parsed = SingleTranslationParser().parse("그녀는 龍門에 도착했다.")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+
+        self.assertEqual(item.translation, "그녀는 龍門에 도착했다.")
+        self.assertFalse(item.result.has_errors)
+
+        unrelated_source = self._prepared_zh(
+            "她抵达了城门。", "SEG_00000047"
+        )
+        unrelated_item = ValidationCoordinator(
+            self.config.validators, self.engine, profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("그녀는 龍門에 도착했다."),
+            unrelated_source,
+        ).by_segment_id[unrelated_source.id]
+        self.assertIn(
+            "NOVEL_CJK_RESIDUE",
+            [issue.code for issue in unrelated_item.result.issues],
+        )
+
+        protected_engine = PlaceholderEngine(
+            [{"pattern": "龍門", "kind": "proper_name"}]
+        )
+        protected_segment = Segment(
+            "SEG_00000048", "她抵达了龍門。", source_language="zh"
+        )
+        protected = protected_engine.protect(protected_segment.source)
+        protected_segment.prepare(protected.text, protected.tokens)
+        protected_item = ValidationCoordinator(
+            self.config.validators, protected_engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(
+                f"그녀는 {protected.tokens[0].placeholder}에 도착했다."
+            ),
+            protected_segment,
+        ).by_segment_id[protected_segment.id]
+        self.assertEqual(
+            protected_item.translation, "그녀는 龍門에 도착했다."
+        )
+        self.assertFalse(protected_item.result.has_errors)
+
+    def test_r48_obvious_korean_mid_clause_truncation_is_error(self) -> None:
+        segment = self._prepared_zh(
+            "持续不断的震动声音清晰地在她的耳边回响。"
+        )
+        parsed = SingleTranslationParser().parse(
+            "계속되는 진동 소리가 그녀의 귀에 울"
+        )
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "TRUNCATED_OUTPUT", [issue.code for issue in item.result.issues]
+        )
+
+    def test_r49_legitimate_short_fragment_is_not_truncated(self) -> None:
+        segment = self._prepared_zh("短句。")
+        parsed = SingleTranslationParser().parse("짧은 문장")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+
+        self.assertEqual(item.translation, "짧은 문장")
+        self.assertNotIn(
+            "TRUNCATED_OUTPUT", [issue.code for issue in item.result.issues]
+        )
+
+    def test_r50_terminology_hints_are_source_triggered(self) -> None:
+        segment = self._prepared_zh("她的阴蒂贴着内裤。")
+        prompt = build_single_translation_prompt(segment, self.profile)
+
+        self.assertIn("- 阴蒂:", prompt)
+        self.assertIn("- 内裤:", prompt)
+        self.assertNotIn("- 爱液:", prompt)
+        self.assertNotIn("- 主卧:", prompt)
+
+    def test_r51_term_hints_have_no_ids_or_unrelated_dictionary(self) -> None:
+        segment = self._prepared_zh("她走进房间。", "ADULT_00000051")
+        prompt = build_single_translation_prompt(segment, self.profile)
+
+        self.assertNotIn(segment.id, prompt)
+        self.assertNotIn("SEG_", prompt)
+        self.assertNotIn("ADULT_", prompt)
+        self.assertNotIn("阴蒂", prompt)
+        self.assertNotIn("爱液", prompt)
+
+    def test_r52_clitoris_cannot_validate_as_male_organ(self) -> None:
+        segment = self._prepared_zh("阴蒂")
+        parsed = SingleTranslationParser().parse("음경")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r53_arousal_fluid_cannot_validate_as_semen_without_source_basis(self) -> None:
+        segment = self._prepared_zh("爱液")
+        parsed = SingleTranslationParser().parse("정액")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+        justified = self._prepared_zh("爱液和精液混在一起。", "SEG_00000002")
+        justified_parsed = SingleTranslationParser().parse(
+            "애액과 정액이 한데 섞였다."
+        )
+        justified_item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(justified_parsed, justified).by_segment_id[justified.id]
+        self.assertEqual(justified_item.translation, "애액과 정액이 한데 섞였다.")
+
+        omitted = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("정액이 한데 섞였다."), justified
+        ).by_segment_id[justified.id]
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in omitted.result.issues],
+        )
+
+    def test_r54_underwear_cannot_validate_as_long_underwear(self) -> None:
+        segment = self._prepared_zh("她脱下内裤。")
+        parsed = SingleTranslationParser().parse("그녀는 내복을 벗었다.")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(parsed, segment).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r55_risk_only_segment_is_valid_and_never_retried(self) -> None:
+        segment = self._prepared_zh("她买了 1 个玩具。")
+        translator = ScriptedTranslator(["그녀는 장난감 1 개를 샀다."])
+        checkpointed: list[str] = []
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+            on_valid=lambda item: checkpointed.append(item.id),
+        )
+
+        result = recovery.translate_segment(segment)
+
+        self.assertFalse(result.failed)
+        self.assertEqual(segment.status, SegmentStatus.VALID)
+        self.assertEqual(segment.attempt_count, 1)
+        self.assertEqual(len(translator.calls), 1)
+        self.assertEqual(checkpointed, [segment.id])
+        self.assertIn(
+            "NUMBER_PRESENT_RISK",
+            [issue.code for issue in segment.validation_issues],
+        )
+
+        precise_negation = validate_risks(
+            "她不想离开。",
+            "그녀는 안 떠나고 싶었다.",
+            self.config.validators,
+            self.profile["validation"],
+        )
+        self.assertNotIn(
+            "NEGATION_FLIP_RISK",
+            [issue.code for issue in precise_negation.issues],
+        )
 
 
 if __name__ == "__main__":

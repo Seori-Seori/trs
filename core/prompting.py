@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from core.segment import Segment, SegmentStatus, ValidationSeverity
+from core.terminology import matching_novel_term_hints
 
 
 class PromptBuildError(ValueError):
@@ -26,8 +27,13 @@ _REPAIR_HINTS: dict[str, str] = {
     "PROMPT_LEAK": "지시문이나 설명을 복사하지 말고 번역만 출력하십시오.",
     "UNBALANCED_DELIMITERS": "원문의 괄호와 구분자 구조를 빠짐없이 균형 있게 유지하십시오.",
     "UNBALANCED_QUOTES": "원문의 인용부호 구조를 빠짐없이 균형 있게 유지하십시오.",
-    "BRACKET_STRUCTURE_LOSS": "원문에 있는 괄호 쌍을 번역에서도 유지하십시오.",
+    "BRACKET_STRUCTURE_LOSS": "원문의 모든 괄호와 괄호 안 내용을 생략하지 말고 빠짐없이 번역하십시오.",
+    "BRACKET_STRUCTURE_PARTIAL_LOSS": "원문의 모든 괄호와 괄호 안 내용을 빠짐없이 번역하십시오.",
+    "PARENTHETICAL_CONTENT_LOSS": "각 괄호 안의 내용까지 생략하지 말고 모두 번역하십시오.",
     "QUOTE_STRUCTURE_LOSS": "원문에 있는 인용부호 쌍을 번역에서도 유지하십시오.",
+    "NOVEL_CJK_RESIDUE": "고유명사 whitelist 외의 중국어 한자를 남기지 말고 완전한 한국어로 번역하십시오.",
+    "TRUNCATED_OUTPUT": "문장을 중간에서 끊지 말고 원문의 끝까지 완전한 한국어 문장으로 번역하십시오.",
+    "NOVEL_TERM_MISTRANSLATION": "현재 원문에 제시된 용어 참고를 따라 성별·대상·의미 범주를 정확히 번역하십시오.",
 }
 
 
@@ -79,6 +85,15 @@ def build_single_translation_prompt(
         "번역문만 출력하고 설명, 머리말, 표식, Markdown 코드 블록을 출력하지 마십시오.",
     ]
     lines.extend(_profile_instructions(profile))
+    terminology_hints = matching_novel_term_hints(
+        segment.source, segment.source_language, profile
+    )
+    if terminology_hints:
+        lines.append("용어 참고(현재 원문에 실제 등장한 항목만):")
+        lines.extend(
+            f"- {hint.source}: {hint.prompt_hint}"
+            for hint in terminology_hints
+        )
     lines.extend(
         [
             "<<<REFERENCE_CONTEXT>>>",

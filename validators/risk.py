@@ -10,41 +10,56 @@ from validators.policy import policy_severity
 
 _NUMBER_RE = re.compile(r"(?<!\w)[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?!\w)")
 _SOURCE_NEGATION_RE = re.compile(
-    r"\b(?:not|no|never|without|cannot|can't|don't|doesn't|do\s+not)\b|ない|ません|ぬ|無|非|不|没|别",
+    r"\b(?:not|no|never|without|cannot|can't|don't|doesn't|do\s+not)\b|"
+    r"(?:ではない|じゃない|ない|ません|できない|無い)|"
+    r"(?:没有|沒有|不能|不会|不會|不要|不是|不想|不再|不敢|不可|不愿|不願|"
+    r"不该|不該|从未|從未|别|別|无法|無法)",
     re.IGNORECASE,
 )
-_KOREAN_NEGATION_RE = re.compile(r"않|아니|없|못|금지|불가|지\s*마|말(?:아|고|라|세요)")
+_KOREAN_NEGATION_RE = re.compile(
+    r"않|아니|없|못|금지|불가|(?:^|\s)안(?:\s|$)|지\s*마|말(?:아|고|라|세요)"
+)
+_SOURCE_EXPLICIT_AFFIRMATIVE_ACTION_RE = re.compile(
+    r"\b(?:skip|go|continue|save|open|close|enable|allow|accept|confirm)\b|"
+    r"(?:スキップ|続行|保存|有効|許可)|"
+    r"(?:跳过|跳過|继续|繼續|保存|启用|啟用|允许|允許|可以|必须|必須)",
+    re.IGNORECASE,
+)
 _PROPER_NOUN_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
 
 
 _CONCEPT_PAIRS = [
     (
         "YES_NO_FLIP_RISK",
-        re.compile(r"\b(?:yes|ok|true)\b|はい|是|对", re.IGNORECASE),
-        re.compile(r"\b(?:no|false)\b|いいえ|否|不是", re.IGNORECASE),
+        re.compile(
+            r"\b(?:yes|ok|true)\b|はい|"
+            r"(?:^|[\s「『“\"，,:：])(?:是|对|對|好的?)(?=$|[\s」』”\"，,。.!?！？])",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\b(?:no|false)\b|いいえ|(?:不是|不对|不對|否定)", re.IGNORECASE),
         re.compile(r"(?:^|\s)(?:예|네|맞습니다|확인)(?:$|[\s.!?])"),
         re.compile(r"아니|아니요|거절|틀렸"),
     ),
     (
         "UP_DOWN_FLIP_RISK",
-        re.compile(r"\bup\b|上|위로?", re.IGNORECASE),
-        re.compile(r"\bdown\b|下|아래로?", re.IGNORECASE),
-        re.compile(r"위|상승|올리"),
-        re.compile(r"아래|하강|내리"),
+        re.compile(r"\bup\b|上へ|上方向|上がる|向上|上升|抬高", re.IGNORECASE),
+        re.compile(r"\bdown\b|下へ|下方向|下がる|向下|下降|降低", re.IGNORECASE),
+        re.compile(r"위로|위쪽|상승|올리"),
+        re.compile(r"아래로|아래쪽|하강|내리"),
     ),
     (
         "LEFT_RIGHT_FLIP_RISK",
-        re.compile(r"\bleft\b|左|왼쪽?", re.IGNORECASE),
-        re.compile(r"\bright\b|右|오른쪽?", re.IGNORECASE),
+        re.compile(r"\bleft\b|左へ|左側|左边|左邊|左方|向左", re.IGNORECASE),
+        re.compile(r"\bright\b|右へ|右側|右边|右邊|右方|向右", re.IGNORECASE),
         re.compile(r"왼쪽?|좌측"),
         re.compile(r"오른쪽?|우측"),
     ),
     (
         "BEFORE_AFTER_FLIP_RISK",
-        re.compile(r"\bbefore\b|前|之前|전에?", re.IGNORECASE),
-        re.compile(r"\bafter\b|後|后|之后|후에?", re.IGNORECASE),
-        re.compile(r"전|이전|앞서"),
-        re.compile(r"후|이후|뒤에"),
+        re.compile(r"\bbefore\b|前に|以前|之前|此前|从前|從前", re.IGNORECASE),
+        re.compile(r"\bafter\b|後に|以後|之后|之後|以后|以後|随后|隨後", re.IGNORECASE),
+        re.compile(r"이전|전에|앞서|예전"),
+        re.compile(r"이후|후에|뒤에|그 뒤"),
     ),
     (
         "ENABLE_DISABLE_FLIP_RISK",
@@ -55,8 +70,8 @@ _CONCEPT_PAIRS = [
     ),
     (
         "OPEN_CLOSE_FLIP_RISK",
-        re.compile(r"\bopen\b|開|开|열", re.IGNORECASE),
-        re.compile(r"\bclos(?:e|ed)\b|閉|关|닫", re.IGNORECASE),
+        re.compile(r"\bopen\b|開ける|打开|打開|开启|開啟", re.IGNORECASE),
+        re.compile(r"\bclos(?:e|ed)\b|閉じる|关闭|關閉", re.IGNORECASE),
         re.compile(r"열|개방"),
         re.compile(r"닫|폐쇄"),
     ),
@@ -102,7 +117,17 @@ def validate_risks(
     if config.detect_negation_risk:
         source_negative = bool(_SOURCE_NEGATION_RE.search(source))
         translated_negative = bool(_KOREAN_NEGATION_RE.search(translation))
-        if source_negative != translated_negative:
+        explicit_positive_action = bool(
+            _SOURCE_EXPLICIT_AFFIRMATIVE_ACTION_RE.search(source)
+        )
+        negation_mismatch = (
+            source_negative and not translated_negative
+        ) or (
+            translated_negative
+            and not source_negative
+            and explicit_positive_action
+        )
+        if negation_mismatch:
             result.add(
                 "NEGATION_FLIP_RISK",
                 policy_severity(

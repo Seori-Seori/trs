@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "terms": [
+    {
+      "source": "阴蒂",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "여성의 클리토리스/음핵",
+      "prompt_hint": "여성의 클리토리스/음핵 의미이다. 남성 성기로 번역하지 않는다.",
+      "preferred_korean": ["클리토리스", "음핵"],
+      "disallowed_korean": ["음경", "남근", "자지"],
+      "exception_source_terms": ["阴茎", "陰莖", "龟头", "龜頭", "鸡巴", "雞巴", "肉棒", "阳具", "陽具"]
+    },
+    {
+      "source": "爱液",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "여성의 흥분성 분비액/애액",
+      "prompt_hint": "여성의 흥분성 분비액/애액 의미이다. 별도 정액 문맥이 없다면 정액으로 번역하지 않는다.",
+      "preferred_korean": ["애액", "분비액"],
+      "disallowed_korean": ["정액", "사정액"],
+      "exception_source_terms": ["精液", "精子", "射精"]
+    },
+    {
+      "source": "内裤",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "속옷/팬티",
+      "prompt_hint": "속옷/팬티 의미이다. 내복으로 번역하지 않는다.",
+      "preferred_korean": ["속옷", "팬티"],
+      "disallowed_korean": ["내복"],
+      "exception_source_terms": ["秋裤", "秋褲", "保暖内衣", "保暖內衣", "棉毛裤", "棉毛褲"]
+    },
+    {
+      "source": "主卧",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "안방/주 침실",
+      "prompt_hint": "안방 또는 주 침실 의미이다. 한자를 섞은 음역이나 엉뚱한 방 명칭을 쓰지 않는다.",
+      "preferred_korean": ["안방", "주 침실"],
+      "disallowed_korean": ["주卧", "卧"]
+    },
+    {
+      "source": "自慰棒",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "문맥에 따른 자위 기구/딜도/바이브레이터",
+      "prompt_hint": "문맥에 맞는 자위 기구, 딜도, 바이브레이터 계열 표현을 사용하고 한자를 남기지 않는다.",
+      "preferred_korean": ["자위 기구", "딜도", "바이브레이터"],
+      "disallowed_korean": ["자위棒"]
+    },
+    {
+      "source": "小穴",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "장르 문맥의 여성 성기 완곡어",
+      "prompt_hint": "장르 문맥의 여성 성기 완곡어이다. 소혈구 같은 의학·일상 오역을 피하고 원문 강도에 맞춘다.",
+      "preferred_korean": ["보지", "구멍"],
+      "disallowed_korean": ["소혈구"]
+    },
+    {
+      "source": "花壶",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "장르 문맥의 여성 성기 완곡·속어",
+      "prompt_hint": "장르 문맥의 성적 완곡·속어이다. 화분이나 꽃병 같은 일상 사물로 직역하지 않는다.",
+      "preferred_korean": [],
+      "disallowed_korean": ["화분", "꽃병"]
+    },
+    {
+      "source": "骚屄",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "강한 여성 성기 비속어",
+      "prompt_hint": "강한 여성 성기 비속어이다. 원문 강도를 순화하거나 더 강화하지 않는다.",
+      "preferred_korean": [],
+      "disallowed_korean": []
+    },
+    {
+      "source": "穴口",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "성기 입구를 가리키는 장르 표현",
+      "prompt_hint": "성기 입구를 가리키는 문맥적 표현이다. 관련 없는 일상 명사로 직역하지 않는다.",
+      "preferred_korean": ["입구"],
+      "disallowed_korean": []
+    },
+    {
+      "source": "阴户",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "여성 외부 성기",
+      "prompt_hint": "여성 외부 성기를 가리킨다. 문맥과 원문 어조에 맞는 자연스러운 한국어를 사용한다.",
+      "preferred_korean": ["음부", "보지"],
+      "disallowed_korean": []
+    },
+    {
+      "source": "高开叉",
+      "scope": "novel",
+      "language": "zh",
+      "meaning": "옷의 트임이 높은 형태",
+      "prompt_hint": "옷의 트임이 높다는 뜻이다. 자연스럽게 '트임이 깊은/높게 트인' 계열로 옮긴다.",
+      "preferred_korean": ["트임이 깊은", "높게 트인"],
+      "disallowed_korean": []
+    }
+  ]
+}

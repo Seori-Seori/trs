@@ -183,6 +183,16 @@ _PAIR_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("curly_bracket", [("{", "}"), ("｛", "｝")]),
 ]
 _QUOTE_PAIRS = [("「", "」"), ("『", "』"), ("“", "”"), ("‘", "’"), ('"', '"')]
+_QUOTE_CHARACTERS = {
+    character for pair in _QUOTE_PAIRS for character in pair
+}
+_PARENTHETICAL_RE = re.compile(r"\(([^()]*)\)|（([^（）]*)）")
+_TERMINAL_PUNCTUATION = frozenset(".!?。！？…")
+_TRAILING_WRAPPERS = frozenset("」』”’\"')]}）］｝")
+_INCOMPLETE_KOREAN_END_RE = re.compile(
+    r"(?:^|[\s,，])(?:울|하|되|있|없|않|였|했|었|겠|시키|말하|느끼|"
+    r"생각하|이어지|계속되|퍼지|흐르|떨리|울리|들리)$"
+)
 
 
 def _balanced_pair_count(text: str, opening: str, closing: str) -> int:
@@ -191,6 +201,67 @@ def _balanced_pair_count(text: str, opening: str, closing: str) -> int:
     if text.count(opening) != text.count(closing):
         return -1
     return text.count(opening)
+
+
+def restore_full_span_outer_quote(source: str, candidate: str) -> tuple[str, bool]:
+    """Restore only one unambiguous source-owned quote wrapper."""
+    source_text = source.strip()
+    candidate_text = candidate.strip()
+    if not candidate_text or any(
+        character in candidate_text for character in _QUOTE_CHARACTERS
+    ):
+        return candidate, False
+
+    for opening, closing in _QUOTE_PAIRS:
+        if not source_text.startswith(opening) or not source_text.endswith(closing):
+            continue
+        if opening == closing:
+            if source_text.count(opening) != 2:
+                continue
+        elif source_text.count(opening) != 1 or source_text.count(closing) != 1:
+            continue
+        interior = source_text[len(opening):len(source_text) - len(closing)]
+        if not interior or any(
+            character in interior for character in _QUOTE_CHARACTERS
+        ):
+            continue
+        return f"{opening}{candidate_text}{closing}", True
+    return candidate, False
+
+
+def _nonempty_parenthetical_count(text: str) -> int:
+    return sum(
+        bool((match.group(1) or match.group(2) or "").strip())
+        for match in _PARENTHETICAL_RE.finditer(text)
+    )
+
+
+def _without_trailing_wrappers(text: str) -> str:
+    value = text.rstrip()
+    while value and value[-1] in _TRAILING_WRAPPERS:
+        value = value[:-1].rstrip()
+    return value
+
+
+def _is_obviously_truncated(source: str, translation: str) -> bool:
+    source_core = _without_trailing_wrappers(source)
+    translation_core = _without_trailing_wrappers(translation)
+    if not source_core or not translation_core:
+        return False
+    if source_core[-1] not in _TERMINAL_PUNCTUATION:
+        return False
+    if translation_core[-1] in _TERMINAL_PUNCTUATION:
+        return False
+
+    source_length = len(re.sub(r"\s", "", source_core))
+    translation_length = len(re.sub(r"\s", "", translation_core))
+    materially_short = (
+        source_length >= 14
+        and translation_length <= max(8, int(source_length * 1.1))
+    )
+    return materially_short and bool(
+        _INCOMPLETE_KOREAN_END_RE.search(translation_core)
+    )
 
 
 def validate_text_structure(
@@ -234,6 +305,30 @@ def validate_text_structure(
                     source_pairs=source_count,
                     translation_pairs=translated_count,
                 )
+
+    if policy and "parenthetical_content_loss_severity" in policy:
+        source_parenthetical_count = _nonempty_parenthetical_count(source)
+        translated_parenthetical_count = _nonempty_parenthetical_count(translation)
+        translated_parenthesis_pairs = sum(
+            max(_balanced_pair_count(translation, opening, closing), 0)
+            for opening, closing in _PAIR_GROUPS[0][1]
+        )
+        if (
+            source_parenthetical_count > translated_parenthetical_count
+            and translated_parenthesis_pairs > 0
+        ):
+            result.add(
+                "PARENTHETICAL_CONTENT_LOSS",
+                policy_severity(
+                    policy,
+                    "parenthetical_content_loss_severity",
+                    ValidationSeverity.ERROR,
+                ),
+                "One or more source parenthetical asides lost their contents",
+                "structure",
+                source_asides=source_parenthetical_count,
+                translated_asides=translated_parenthetical_count,
+            )
 
     source_quote_count = sum(max(_balanced_pair_count(source, op, cl), 0) for op, cl in _QUOTE_PAIRS)
     translated_quote_counts = [_balanced_pair_count(translation, op, cl) for op, cl in _QUOTE_PAIRS]
@@ -282,5 +377,22 @@ def validate_text_structure(
             "structure",
             source_length=source_len,
             translation_length=translated_len,
+        )
+    if (
+        policy
+        and "truncated_output_severity" in policy
+        and _is_obviously_truncated(source, translation)
+    ):
+        result.add(
+            "TRUNCATED_OUTPUT",
+            policy_severity(
+                policy,
+                "truncated_output_severity",
+                ValidationSeverity.ERROR,
+            ),
+            "Korean output appears to stop at an incomplete clause",
+            "structure",
+            source_ending=source[-24:],
+            translation_ending=translation[-24:],
         )
     return result

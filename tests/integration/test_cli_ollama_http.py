@@ -49,6 +49,8 @@ class _OllamaHandler(BaseHTTPRequestHandler):
             "Hello [[PH_0001]]": "안녕 [[PH_0001]]",
             "世界": "세계",
             "壊れた": "복구 번역",
+            "「她回答了。」": "그녀는 대답했다.",
+            "她触碰阴蒂。": "그녀는 클리토리스를 만졌다.",
         }
         if (
             source in type(self).fail_once_sources
@@ -193,6 +195,72 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                 self.assertEqual(_OllamaHandler.source_counts["世界"], 1)
                 self.assertEqual(_OllamaHandler.source_counts["壊れた"], 2)
                 self.assertEqual(len(_OllamaHandler.requests), 3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_round5_quote_normalization_and_source_term_hint_flow(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                _OllamaHandler.requests = []
+                _OllamaHandler.source_counts = {}
+                _OllamaHandler.fail_once_sources = set()
+                temp = Path(directory)
+                input_path = temp / "input.txt"
+                input_path.write_text(
+                    "「她回答了。」\n\n她触碰阴蒂。", encoding="utf-8"
+                )
+
+                config = json.loads(
+                    (ROOT / "config.json").read_text(encoding="utf-8")
+                )
+                config["ollama"]["base_url"] = (
+                    f"http://127.0.0.1:{server.server_port}"
+                )
+                config["ollama"]["model"] = "test-hy-mt"
+                config_path = temp / "config.json"
+                config_path.write_text(
+                    json.dumps(config, ensure_ascii=False), encoding="utf-8"
+                )
+
+                self.assertEqual(
+                    run(
+                        [
+                            str(input_path),
+                            "--config",
+                            str(config_path),
+                            "--mode",
+                            "novel",
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    (temp / "input.ko.txt").read_text(encoding="utf-8"),
+                    "「그녀는 대답했다.」\n\n그녀는 클리토리스를 만졌다.",
+                )
+                self.assertEqual(len(_OllamaHandler.requests), 2)
+                first_prompt = _OllamaHandler.requests[0]["prompt"]
+                second_prompt = _OllamaHandler.requests[1]["prompt"]
+                self.assertNotIn("- 阴蒂:", first_prompt)
+                self.assertIn("- 阴蒂:", second_prompt)
+                self.assertTrue(
+                    all(
+                        "SEG_" not in request["prompt"]
+                        and "ADULT_" not in request["prompt"]
+                        for request in _OllamaHandler.requests
+                    )
+                )
+                report = json.loads(
+                    (temp / "input.qa.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(report["summary"]["valid"], 2)
+                self.assertEqual(report["summary"]["failed"], 0)
+                self.assertEqual(report["summary"]["warnings"], 1)
         finally:
             server.shutdown()
             server.server_close()

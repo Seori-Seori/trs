@@ -27,10 +27,31 @@ def validate_korean(
     translation: str,
     source_language: str,
     config: ValidatorsConfig,
+    *,
+    novel_mode: bool = False,
+    cjk_whitelist: list[str] | None = None,
+    protected_values: list[str] | None = None,
 ) -> ValidationResult:
     result = ValidationResult()
     hangul_count = len(_HANGUL_RE.findall(translation))
     source_letters = len(_LETTER_RE.findall(source))
+    source_backed_whitelist = [
+        term
+        for term in (cjk_whitelist or [])
+        if isinstance(term, str) and term and term in source and term in translation
+    ]
+    source_backed_protected = [
+        value
+        for value in (protected_values or [])
+        if isinstance(value, str) and value and value in source and value in translation
+    ]
+    residue_text = translation
+    for term in sorted(
+        set(source_backed_whitelist + source_backed_protected),
+        key=len,
+        reverse=True,
+    ):
+        residue_text = residue_text.replace(term, "")
 
     if source_language != "ko" and source_letters >= 3 and hangul_count == 0:
         source_words = _LATIN_TOKEN_RE.findall(source)
@@ -40,11 +61,15 @@ def validate_korean(
             and len(translation_words) == 1
             and source.strip() == translation.strip()
         )
-        if likely_name_or_symbol:
+        source_backed_only = (
+            bool(source_backed_whitelist or source_backed_protected)
+            and not _LETTER_RE.search(residue_text)
+        )
+        if likely_name_or_symbol or source_backed_only:
             result.add(
                 "KOREAN_OUTPUT_ABSENT_RISK",
                 ValidationSeverity.RISK,
-                "A single Latin name/symbol was intentionally preserved without Hangul",
+                "An explicitly source-backed protected value/name/symbol was preserved without Hangul",
                 "korean",
             )
         else:
@@ -56,9 +81,9 @@ def validate_korean(
             )
 
     if config.detect_cjk_residue:
-        kana = _KANA_RE.findall(translation)
-        cjk = _CJK_RE.findall(translation)
-        if "的" in translation:
+        kana = _KANA_RE.findall(residue_text)
+        cjk = _CJK_RE.findall(residue_text)
+        if "的" in residue_text:
             result.add(
                 "KNOWN_BAD_CJK_RESIDUE",
                 ValidationSeverity.ERROR,
@@ -76,7 +101,16 @@ def validate_korean(
             )
         cjk_without_known = [char for char in cjk if char != "的"]
         visible_length = max(1, len(re.sub(r"\s", "", translation)))
-        if len(cjk_without_known) >= 3 or len(cjk_without_known) / visible_length >= 0.08:
+        if novel_mode and cjk_without_known:
+            result.add(
+                "NOVEL_CJK_RESIDUE",
+                ValidationSeverity.ERROR,
+                "Unprotected Chinese characters remain in novel-mode Korean output",
+                "korean",
+                characters=sorted(set(cjk_without_known)),
+                count=len(cjk_without_known),
+            )
+        elif len(cjk_without_known) >= 3 or len(cjk_without_known) / visible_length >= 0.08:
             result.add(
                 "EXCESSIVE_CJK_RESIDUE",
                 ValidationSeverity.ERROR,

@@ -34,6 +34,7 @@ seori_translator/
 │  ├─ checkpoint.py
 │  ├─ language.py
 │  ├─ placeholders.py
+│  ├─ terminology.py
 │  └─ hashing.py
 ├─ adapters/
 │  ├─ base.py
@@ -46,9 +47,11 @@ seori_translator/
 │  ├─ structure.py
 │  ├─ korean.py
 │  ├─ placeholders.py
+│  ├─ terminology.py
 │  └─ risk.py
 ├─ profiles/
-│  └─ novel.json
+│  ├─ novel.json
+│  └─ novel_zh_terms.json
 ├─ projects/
 ├─ output/
 ├─ backup/
@@ -141,13 +144,16 @@ Adapter.load
  -> protect placeholders
  -> checkpoint lookup
  -> context build
+ -> select source-triggered novel terminology hints
  -> build native single-Segment prompt without exposing internal ID
  -> translator.translate text only
  -> parse/interpret response ONCE as the known Segment candidate
  -> structure validation
  -> Korean validation
  -> placeholder validation
+ -> deterministic full-span outer quote normalization when unambiguous
  -> risk detection
+ -> novel CJK / truncation / source-anchored terminology validation
  -> accept valid segments immediately
  -> checkpoint valid segments immediately
  -> partial repair failed Segment only
@@ -158,6 +164,8 @@ Adapter.load
 ```
 
 정상 Segment를 실패 Segment와 함께 다시 모델에 보내면 안 된다.
+용어 데이터는 현재 immutable source에 실제로 등장한 항목만 prompt에 포함하며, 최종
+번역문에 대한 전역 문자열 치환에는 사용하지 않는다.
 
 ## 7. v6에서 반드시 계승할 동작
 
@@ -225,6 +233,11 @@ ERROR
 
 - ERROR: 자동 복구 대상
 - RISK: 번역을 반드시 폐기하지 않음. QA report/선택적 semantic QA 대상
+
+소설 모드에서는 비보호 잔류 한자, 보수적으로 확정 가능한 문장 절단, 명시적인
+source-anchored 용어 범주 오역을 ERROR로 처리한다. 원문 전체를 감싼 인용부호 한
+쌍만 누락된 경우에는 같은 쌍만 복원할 수 있지만 내부 인용부호·괄호 안 의미 손실은
+모델 repair 없이 추정 복원하지 않는다.
 
 ## 11. Adapter 계약
 

@@ -24,6 +24,7 @@ TXT
  -> language detection
  -> placeholder protection
  -> context build
+ -> source-triggered novel terminology hints
  -> HY-MT native single-Segment request (internal ID is not exposed)
  -> Ollama translation text
  -> parse once
@@ -44,7 +45,7 @@ TXT
 4. 정상 판정된 Segment는 절대로 재번역하지 않는다.
 5. 모델 응답은 한 번만 파싱하고 그 결과를 모든 검증/복구 단계에서 재사용한다.
 6. 구조 오류는 문제 Segment만 부분복구한다.
-7. 부분복구 실패 시에만 더 작은 블록으로 분할한다.
+7. 일반 Segment는 단건 복구만 수행하고, 긴 Segment만 안전한 자식 조각으로 분할한다.
 8. 끝까지 실패한 경우만 failure log에 기록한다.
 9. placeholder 개수/값/순서가 틀리면 번역 실패다.
 10. 모든 문장을 별도 AI 검수하지 않는다. 규칙 기반 검증이 기본이며 의미상 위험한 문장만 선택적 semantic QA 대상으로 표시한다.
@@ -160,6 +161,10 @@ backup/novel.*.txt    실행 전 원본 백업
 - repair 프롬프트에는 원문·문맥·검증 실패 코드만 포함하며 깨진 번역을 기준으로 삼지 않는다.
 - 일반 Segment는 설정된 단건 재시도 횟수를 소진하면 FAILED가 되며, 긴 Segment만 안전한 자식 조각으로 분할한다.
 - placeholder 값·개수·순서가 틀리면 원래 위치를 추정하지 않고 실패 처리한다.
+- `novel` 중국어 원문은 현재 Segment에 실제 등장한 용어 힌트만 prompt에 추가하며 결과 문자열을 사후 치환하지 않는다.
+- `novel`의 비보호 잔류 한자와 명백한 한국어 중간 절단은 ERROR로 처리해 해당 Segment만 repair한다.
+- 원문 전체를 감싼 인용부호 한 쌍만 빠진 경우에 한해 Python이 같은 바깥 쌍을 결정적으로 복원한다. 내부 인용부호나 괄호 내용 손실은 자동 복원하지 않는다.
+- 넓은 부정·방향·상태 RISK는 보수적으로 표시하며 RISK만 있는 Segment는 재번역하지 않는다.
 - 동일 ID와 동일 source SHA-256의 `VALID` checkpoint는 재검증 후 모델 호출 없이 재사용한다.
 - checkpoint의 source SHA-256이 현재 TXT와 다르면 resume을 거부하고 `--no-resume`을 안내한다.
 - 번역 도중 원본 TXT가 바뀌면 SHA-256 안전장치가 결과 재삽입을 거부한다.
@@ -176,6 +181,6 @@ python -m unittest discover -s tests -v
 ```
 
 `tests/regression/test_regression_cases.py`에는 레거시 parser 호환 회귀를 포함해
-`R01`부터 Round 4 네이티브 프로토콜의 `R42`까지 각각의 회귀 테스트가 존재한다.
+`R01`부터 Round 5 소설 품질 강화의 `R55`까지 각각의 회귀 테스트가 존재한다.
 통합 테스트는 로컬 임시 HTTP 서버로 Ollama API 계약을 재현하여
 `main.py input.txt`부터 백업, 한국어 TXT, SQLite, QA JSON 생성까지 검증한다.
