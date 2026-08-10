@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.seori.sqlite
+*.seori.sqlite-shm
+*.seori.sqlite-wal
+*.qa.json
+*.ko.txt
+backup/
+.pytest_cache/

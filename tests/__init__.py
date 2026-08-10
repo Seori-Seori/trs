@@ -1,0 +1,1 @@
+"""Seori Translator tests."""

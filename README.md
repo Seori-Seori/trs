@@ -86,3 +86,71 @@ backup/novel.<timestamp>.txt
 - 이후: EPUB / GUI
 
 상세 구현 계약은 `docs/` 문서를 따른다.
+
+## v7.0 실행
+
+필요 환경:
+
+- Windows 11
+- Python 3.10 이상
+- 로컬 Ollama
+- 기본 모델 `huihui_ai/hy-mt1.5-abliterated:7b`
+
+런타임 Python 외부 패키지는 사용하지 않는다.
+
+```bash
+ollama pull huihui_ai/hy-mt1.5-abliterated:7b
+python main.py novel.txt
+```
+
+Windows에서는 다음 BAT도 사용할 수 있다.
+
+```bat
+run_translation.bat novel.txt
+```
+
+기본 생성 파일:
+
+```text
+novel.ko.txt          한국어 결과
+novel.seori.sqlite    문단별 checkpoint/resume 데이터
+novel.qa.json         validator/RISK/terminal failure 보고서
+backup/novel.*.txt    실행 전 원본 백업
+```
+
+사용 가능한 최소 옵션:
+
+```text
+--config PATH
+--model MODEL
+--output PATH
+--profile novel|PATH
+--resume / --no-resume
+```
+
+입력은 UTF-8 또는 UTF-8 BOM TXT만 지원한다. CP949/Shift-JIS를 임의 추측하지
+않으며 원본 TXT와 같은 경로로 출력하는 것도 거부한다.
+
+## 안전 복구 동작
+
+- 모델 응답마다 parser는 정확히 한 번만 실행된다.
+- 한 배치에서 검증을 통과한 Segment는 즉시 SQLite에 저장된다.
+- 실패한 Segment만 partial repair 대상으로 다시 요청한다.
+- partial repair가 실패하면 실패 집합을 분할하고 마지막에는 한 문단씩 재시도한다.
+- placeholder 값·개수·순서가 틀리면 원래 위치를 추정하지 않고 실패 처리한다.
+- 동일 ID와 동일 source SHA-256의 `VALID` checkpoint는 재검증 후 모델 호출 없이 재사용한다.
+- 번역 도중 원본 TXT가 바뀌면 SHA-256 안전장치가 결과 재삽입을 거부한다.
+- 끝까지 실패한 문단만 QA의 `terminal_failures`에 기록하며 결과 TXT에는 해당 원문을 안전하게 유지한다.
+
+## 테스트
+
+Ollama 모델 없이도 parser, validator, checkpoint, partial repair와 split을 결정적으로
+검사할 수 있다. 표준 라이브러리 `unittest`만 사용한다.
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+`tests/regression/test_regression_cases.py`에는 `R01`부터 `R23`까지 각각의 회귀
+테스트가 존재한다. 통합 테스트는 로컬 임시 HTTP 서버로 Ollama API 계약을 재현하여
+`main.py input.txt`부터 백업, 한국어 TXT, SQLite, QA JSON 생성까지 검증한다.
