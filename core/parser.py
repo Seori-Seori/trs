@@ -23,6 +23,9 @@ class ParsedResponse:
     raw_response: str
     code_fence_removed: bool = False
     blank_line_count: int = 0
+    occurrences: dict[str, list[str]] = field(default_factory=dict)
+    identical_duplicates: list[str] = field(default_factory=list)
+    conflicting_duplicates: list[str] = field(default_factory=list)
 
 
 class ResponseParser:
@@ -42,6 +45,7 @@ class ResponseParser:
                 code_fence_removed = True
 
         rows: dict[str, str] = {}
+        occurrences: dict[str, list[str]] = {}
         row_order: list[str] = []
         duplicates: list[str] = []
         malformed: list[MalformedLine] = []
@@ -57,10 +61,21 @@ class ResponseParser:
                 continue
             row_id, translation = match.groups()
             row_order.append(row_id)
+            occurrences.setdefault(row_id, []).append(translation)
             if row_id in rows:
                 duplicates.append(row_id)
                 continue
             rows[row_id] = translation
+
+        identical_duplicates: list[str] = []
+        conflicting_duplicates: list[str] = []
+        for row_id, translations in occurrences.items():
+            if len(translations) < 2:
+                continue
+            if all(translation == translations[0] for translation in translations[1:]):
+                identical_duplicates.append(row_id)
+            else:
+                conflicting_duplicates.append(row_id)
 
         return ParsedResponse(
             rows=rows,
@@ -68,6 +83,9 @@ class ResponseParser:
             duplicates=duplicates,
             malformed_lines=malformed,
             raw_response=raw_response,
+            occurrences=occurrences,
+            identical_duplicates=identical_duplicates,
+            conflicting_duplicates=conflicting_duplicates,
             code_fence_removed=code_fence_removed,
             blank_line_count=blank_line_count,
         )

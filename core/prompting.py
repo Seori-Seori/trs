@@ -11,6 +11,7 @@ class PromptBuildError(ValueError):
 
 
 _REPAIR_HINTS: dict[str, str] = {
+    "DUPLICATE_ID": "같은 출력 행을 반복하지 마십시오.",
     "MISSING_PLACEHOLDER": "모든 보호 토큰을 정확히 한 번씩 원래 순서로 유지하십시오.",
     "DUPLICATE_PLACEHOLDER": "보호 토큰을 복제하지 마십시오.",
     "UNEXPECTED_PLACEHOLDER": "원문에 없는 보호 토큰을 만들지 마십시오.",
@@ -26,12 +27,8 @@ _REPAIR_HINTS: dict[str, str] = {
 }
 
 
-def _context_block(segment: Segment) -> str:
-    payload = {
-        "before": segment.context_before,
-        "after": segment.context_after,
-    }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+def _context_list(items: list[str]) -> str:
+    return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
 
 def build_prompt(
@@ -70,13 +67,22 @@ def build_prompt(
         "설명, 머리말, Markdown 코드 블록을 출력하지 마십시오.",
     ]
     lines.extend(str(instruction) for instruction in profile_instructions)
-    lines.append("<<<CONTEXT>>>")
-    for segment in segments:
-        lines.append(f"{segment.id}\t{_context_block(segment)}")
-    lines.append("<<<END_CONTEXT>>>")
-    if mode in {"repair", "single"}:
-        failure_rows: list[str] = []
-        for segment in segments:
+    for ordinal, segment in enumerate(segments, start=1):
+        prepared = (
+            segment.prepared_source
+            if segment.prepared_source is not None
+            else segment.source
+        )
+        if "\n" in prepared or "\r" in prepared or "\t" in prepared:
+            raise PromptBuildError(
+                f"Prepared source for {segment.id} contains an unprotected tab/newline"
+            )
+
+        lines.append(f"<<<ITEM {ordinal}>>>")
+        lines.append("문맥은 번역 판단에만 사용하고 출력하지 마십시오.")
+        lines.append(f"앞 문맥: {_context_list(segment.context_before)}")
+        lines.append(f"뒤 문맥: {_context_list(segment.context_after)}")
+        if mode in {"repair", "single"}:
             codes = sorted(
                 {
                     issue.code
@@ -84,26 +90,19 @@ def build_prompt(
                     if issue.severity == ValidationSeverity.ERROR
                 }
             )
-            if not codes:
-                continue
-            hints = list(
-                dict.fromkeys(_REPAIR_HINTS[code] for code in codes if code in _REPAIR_HINTS)
-            )
-            failure_rows.append(
-                f"{segment.id}\t{','.join(codes)}\t{' '.join(hints)}".rstrip()
-            )
-        if failure_rows:
-            lines.append("<<<FAILURES>>>")
-            lines.extend(failure_rows)
-            lines.append("<<<END_FAILURES>>>")
-    lines.append("<<<TARGETS>>>")
-    for segment in segments:
-        prepared = segment.prepared_source if segment.prepared_source is not None else segment.source
-        if "\n" in prepared or "\r" in prepared or "\t" in prepared:
-            raise PromptBuildError(
-                f"Prepared source for {segment.id} contains an unprotected tab/newline"
-            )
+            if codes:
+                lines.append(f"이전 응답 실패 이유: {','.join(codes)}")
+                hints = list(
+                    dict.fromkeys(
+                        _REPAIR_HINTS[code]
+                        for code in codes
+                        if code in _REPAIR_HINTS
+                    )
+                )
+                if hints:
+                    lines.append(f"수정 지침: {' '.join(hints)}")
+        lines.append("번역 대상:")
         lines.append(f"{segment.id}\t{segment.source_language}\t{prepared}")
-    lines.append("<<<END_TARGETS>>>")
+        lines.append(f"<<<END_ITEM {ordinal}>>>")
     lines.append("이제 위 대상 ID와 번역만 출력하십시오.")
     return "\n".join(lines)

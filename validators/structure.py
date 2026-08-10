@@ -22,7 +22,7 @@ _PROMPT_LEAK_PATTERNS = [
         r"번역\s*규칙",
         r"다음(?:의)?\s*텍스트를\s*번역",
         r"출력\s*형식",
-        r"<<<(?:targets|context|failures|end)",
+        r"<<<(?:item|targets|context|failures|end)",
     )
 ]
 
@@ -53,14 +53,31 @@ def validate_structure(
                 segment_id=segment_id,
             )
 
-    for duplicate in sorted(set(parsed.duplicates)):
+    identical_duplicates = set(parsed.identical_duplicates)
+    for duplicate in sorted(identical_duplicates):
+        target = results.get(duplicate, global_result)
+        target.add(
+            "IDENTICAL_DUPLICATE_ID",
+            ValidationSeverity.WARNING,
+            f"Row ID {duplicate} was repeated with an exactly identical translation",
+            "structure",
+            segment_id=duplicate,
+            occurrence_count=len(parsed.occurrences.get(duplicate, [])),
+        )
+
+    conflicting_duplicates = set(parsed.conflicting_duplicates)
+    # Preserve the legacy ParsedResponse contract for callers that only populate
+    # duplicates: an unclassified duplicate must remain a conflict, never salvage.
+    conflicting_duplicates.update(set(parsed.duplicates) - identical_duplicates)
+    for duplicate in sorted(conflicting_duplicates):
         target = results.get(duplicate, global_result)
         target.add(
             "DUPLICATE_ID",
             ValidationSeverity.ERROR,
-            f"Row ID {duplicate} appears more than once",
+            f"Row ID {duplicate} appears with conflicting translations",
             "structure",
             segment_id=duplicate,
+            occurrence_count=len(parsed.occurrences.get(duplicate, [])),
         )
 
     unexpected = [row_id for row_id in parsed.rows if row_id not in expected_set]

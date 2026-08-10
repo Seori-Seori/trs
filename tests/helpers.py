@@ -6,8 +6,18 @@ from translators.base import Translator
 
 
 def prompt_targets(prompt: str) -> list[tuple[str, str, str]]:
-    block = prompt.split("<<<TARGETS>>>\n", 1)[1].split("\n<<<END_TARGETS>>>", 1)[0]
-    return [tuple(line.split("\t", 2)) for line in block.splitlines() if line]
+    lines = prompt.splitlines()
+    targets: list[tuple[str, str, str]] = []
+    for index, line in enumerate(lines):
+        if line != "번역 대상:":
+            continue
+        if index + 1 >= len(lines):
+            raise AssertionError("Prompt target marker has no target row")
+        parts = lines[index + 1].split("\t", 2)
+        if len(parts) != 3:
+            raise AssertionError("Prompt target row is not ID<TAB>language<TAB>source")
+        targets.append((parts[0], parts[1], parts[2]))
+    return targets
 
 
 class ScriptedTranslator(Translator):
