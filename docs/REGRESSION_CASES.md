@@ -1,0 +1,242 @@
+# Mandatory Regression Cases
+
+이 문서의 케이스는 v6 실전 사용 중 실제로 발생한 문제다.
+기능 추가/리팩터링 후에도 반드시 자동 테스트되어야 한다.
+
+테스트 원칙:
+
+- 정상 Segment를 다시 번역하지 않는지 함께 확인한다.
+- parser 결과를 재파싱하지 않는다.
+- ERROR와 RISK를 구분한다.
+- 모델 없이 validator/parser 단위 테스트로 재현 가능한 버그는 반드시 deterministic test로 만든다.
+
+## R01 - 중국어 문자 `的` 혼입
+
+원문이 일본어/중국어이고 결과가 대부분 한국어지만 `的` 같은 CJK 원문 문자가 섞인다.
+
+기대:
+- Korean validator ERROR 또는 명시된 정책에 따른 repair 대상
+- 해당 Segment만 재번역
+
+## R02 - 줄바꿈 placeholder 삭제
+
+expected:
+
+```text
+[[PH_0001]]
+```
+
+actual translation에서 placeholder가 사라짐.
+
+기대:
+- Placeholder validator ERROR
+- 임의 위치 추정 복원 금지
+- 해당 Segment만 repair
+
+## R03 - 프롬프트 자체 번역/누출
+
+결과에 다음 계열 문자열이 나타남.
+
+```text
+Translate the following
+번역 규칙
+output only
+```
+
+기대:
+- prompt leak ERROR
+
+## R04 - placeholder 예시 누출
+
+모델이 실제 원문에 없던 다음 예시를 출력.
+
+```text
+[[CTRL_n]]
+[[CTRL_1]]
+```
+
+기대:
+- prompt/example leak ERROR
+- 실제 등록된 placeholder와 구별
+
+## R05 - 다음 행 ID와 번역이 현재 셀에 병합
+
+```text
+SEG_000001<TAB>첫 번역 SEG_000002 다음 번역
+```
+
+기대:
+- row ID leak ERROR
+- SEG_000001만 문제로 표시
+- 이미 독립적으로 정상인 다른 Segment는 유지
+
+## R06 - expected ID 누락
+
+expected:
+
+```text
+SEG_1 SEG_2 SEG_3
+```
+
+actual:
+
+```text
+SEG_1 SEG_3
+```
+
+기대:
+- missing SEG_2 ERROR
+- SEG_1/SEG_3이 개별 검증 통과했다면 salvage
+- SEG_2만 repair
+
+## R07 - expected보다 +1 unexpected ID
+
+expected:
+
+```text
+SEG_1 SEG_2 SEG_3
+```
+
+actual:
+
+```text
+SEG_1 SEG_2 SEG_3 SEG_4
+```
+
+기대:
+- unexpected SEG_4 구조 ERROR/anomaly
+- SEG_4는 절대 결과에 삽입하지 않음
+- 정상 expected rows는 재번역하지 않음
+
+이 케이스는 v6의 실제 검증 구멍이므로 중요도가 높다.
+
+## R08 - Cyrillic 혼입
+
+```text
+안녕하세요 Привет
+```
+
+기대:
+- 원문/허용목록에 없는 Cyrillic 탐지
+- unexpected script ERROR
+
+## R09 - Skip 의미 반전
+
+source:
+
+```text
+Skip
+```
+
+bad translation:
+
+```text
+건너뛰지 마세요
+```
+
+기대:
+- risk validator가 의미 반전 고위험으로 표시
+- semantic QA 옵션 활성 시 선택 대상
+
+단 일반 구조 validator가 이 번역의 의미를 100% 판정한다고 가정하지 않는다.
+
+## R10 - 두 행짜리 한 문장의 첫 행 임의 완성
+
+원문의 문장이 Segment 경계 때문에 이어지는데 첫 Segment를 모델이 자기 마음대로 완결시킨다.
+
+기대:
+- context를 통해 다음 Segment를 제공
+- 문단 단위 segmentation으로 발생 빈도를 줄임
+- 구조적으로 완전 자동 판정 불가하면 RISK/semantic QA 대상으로 남김
+
+## R11 - 두 번째 행에 전혀 다른 문장 생성
+
+기대:
+- 지나친 원문 잔존/길이 이상/문맥 위험 등의 heuristic 가능
+- 완전 의미 검증이 필요한 경우 선택적 semantic QA
+- 정상 전체 AI 재검수는 금지
+
+## R12 - 괄호/인용부호 손실
+
+예:
+
+```text
+「Alice」
+(Alice)
+『Alice』
+```
+
+기대:
+- pair/balance/signature 검사
+- 언어별 인용부호 변환 정책은 profile로 허용 가능
+- 열림/닫힘 자체가 사라지는 손상은 탐지
+
+## R13 - RPG Maker 제어코드 훼손
+
+예:
+
+```text
+\N[1]
+\F[10]
+```
+
+기대:
+- v7.3 이전에도 generic placeholder 엔진 단위 테스트로 존재
+- protect -> translate mock -> restore round trip 100% 동일
+
+## R14 - 영어 단어가 이상하게 섞인 신음/의성어
+
+한국어 출력에 무작위 영어 토큰이 비정상적으로 혼합.
+
+기대:
+- Latin 문자 전체 금지 금지
+- 고유명사/의도적 영문은 허용
+- 과도한 혼합은 heuristic WARNING/RISK
+- source와 glossary 정보를 고려
+
+## R15 - 한 행에 여러 행 번역을 합침
+
+하나의 expected row translation이 비정상적으로 다른 row 내용까지 포함.
+
+기대:
+- row ID leak가 있으면 ERROR
+- ID가 없더라도 비정상 길이/다중 출력 패턴 heuristic 적용 가능
+- 문제 Segment만 repair
+
+# 추가 필수 구조 테스트
+
+## R16 - duplicate ID
+
+동일 ID 두 번 출력 -> ERROR.
+
+## R17 - output order mismatch
+
+설정에서 strict order 사용 시 expected order와 다르면 ERROR.
+
+## R18 - translation empty
+
+빈 문자열/공백만 존재 -> ERROR.
+
+## R19 - placeholder duplicate
+
+원본 1개, 결과 2개 -> ERROR.
+
+## R20 - placeholder order changed
+
+순서 보존이 필요한 placeholder의 순서가 바뀜 -> ERROR.
+
+## R21 - prompt response code fence
+
+모델이 ``` 등을 덧붙여도 parser가 정책에 맞게 거부/정규화하고 구조 검증한다.
+
+## R22 - resume never retranslates VALID
+
+mock translator 호출 횟수를 검사하여 VALID + 동일 source hash Segment가 재호출되지 않는지 확인한다.
+
+## R23 - partial repair never retranslates good rows
+
+10개 중 2개 ERROR 시 mock translator에 repair 대상으로 정확히 2개만 전달되는지 확인한다.
+
+# 완료 조건
+
+v7.0을 "완성"으로 부르기 전에 최소 R01~R23이 자동 테스트로 존재하고 통과해야 한다.
