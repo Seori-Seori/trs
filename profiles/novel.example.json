@@ -1,0 +1,20 @@
+{
+  "name": "novel",
+  "style": "natural_korean_webnovel_lightnovel",
+  "target_language": "ko",
+  "context_before": 3,
+  "context_after": 2,
+  "instructions": [
+    "원문의 의미를 임의로 순화하거나 강화하지 않는다.",
+    "사건과 정보를 추가하거나 삭제하지 않는다.",
+    "성인 표현도 원문의 강도를 유지한다.",
+    "자연스러운 한국 웹소설/라이트노벨 문체를 기본으로 한다.",
+    "캐릭터 말투와 호칭의 일관성을 유지한다.",
+    "의도적인 영문 표기와 고유명사는 무조건 오류로 처리하지 않는다.",
+    "문맥은 번역 판단에만 사용하며 출력에는 현재 target만 반환한다."
+  ],
+  "semantic_risk": {
+    "enabled": true,
+    "automatic_ai_review": false
+  }
+}
