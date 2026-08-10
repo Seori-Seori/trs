@@ -978,6 +978,218 @@ class MandatoryRegressionCases(unittest.TestCase):
             [issue.code for issue in precise_negation.issues],
         )
 
+    def test_r56_colloquial_source_gets_natural_register_guidance(self) -> None:
+        segment = self._prepared_zh("她挺起丰满的奶子，故意贴近他。")
+        prompt = build_single_translation_prompt(segment, self.profile)
+
+        self.assertIn("장르 문체 참고", prompt)
+        self.assertIn("奶子", prompt)
+        self.assertIn("가슴", prompt)
+        self.assertIn("natural_korean_genre_fiction", prompt)
+
+    def test_r57_explicit_medical_context_allows_anatomical_korean(self) -> None:
+        segment = self._prepared_zh("医生向患者解释阴户的解剖结构。")
+        translation = "의사는 환자에게 여성 외부 생식기의 해부학적 구조를 설명했다."
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(translation), segment
+        ).by_segment_id[segment.id]
+
+        self.assertEqual(item.translation, translation)
+        self.assertNotIn(
+            "NOVEL_REGISTER_MISMATCH",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r58_register_and_name_hints_are_source_triggered(self) -> None:
+        thigh = self._prepared_zh("她揉着自己的大腿。")
+        thigh_prompt = build_single_translation_prompt(thigh, self.profile)
+        self.assertIn("大腿", thigh_prompt)
+        self.assertIn("허벅지", thigh_prompt)
+        self.assertNotIn("本小姐", thigh_prompt)
+
+        named = self._prepared_zh("鱼鱼笑了。", "SEG_00000058")
+        named_prompt = build_single_translation_prompt(named, self.profile)
+        self.assertIn("이 작업에서는 '위위'", named_prompt)
+
+        overridden_profile = json.loads(json.dumps(self.profile))
+        overridden_profile["name_map"]["鱼鱼"] = "유유"
+        overridden_prompt = build_single_translation_prompt(
+            named, overridden_profile
+        )
+        self.assertIn("이 작업에서는 '유유'", overridden_prompt)
+        self.assertNotIn("이 작업에서는 '위위'", overridden_prompt)
+
+        unnamed = self._prepared_zh("她笑了。", "SEG_00000058_NO_NAME")
+        unnamed_prompt = build_single_translation_prompt(unnamed, self.profile)
+        self.assertNotIn("이 작업에서는 '위위'", unnamed_prompt)
+
+    def test_r59_unrelated_segment_gets_no_global_register_glossary(self) -> None:
+        segment = self._prepared_zh("她走进房间。")
+        prompt = build_single_translation_prompt(segment, self.profile)
+
+        self.assertNotIn("장르 문체 참고", prompt)
+        self.assertNotIn("용어 의미 참고", prompt)
+        self.assertNotIn("奶子", prompt)
+        self.assertNotIn("花壶", prompt)
+        self.assertNotIn("本小姐", prompt)
+
+    def test_r60_style_diagnostic_never_rewrites_output(self) -> None:
+        segment = self._prepared_zh("她揉着丰满的奶子。")
+        translation = "그녀는 풍만한 유방을 어루만졌다."
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(translation), segment
+        ).by_segment_id[segment.id]
+
+        self.assertEqual(item.translation, translation)
+        issue = next(
+            issue
+            for issue in item.result.issues
+            if issue.code == "NOVEL_REGISTER_MISMATCH"
+        )
+        self.assertEqual(issue.severity, ValidationSeverity.RISK)
+
+    def test_r61_main_bedroom_cannot_become_kitchen(self) -> None:
+        segment = self._prepared_zh("她回到主卧休息。")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("그녀는 주방으로 돌아가 쉬었다."),
+            segment,
+        ).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+        both = self._prepared_zh(
+            "她从主卧走进厨房。", "SEG_00000061_BOTH"
+        )
+        both_translation = "그녀는 안방에서 주방으로 들어갔다."
+        both_item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse(both_translation), both
+        ).by_segment_id[both.id]
+        self.assertEqual(both_item.translation, both_translation)
+
+    def test_r62_clitoris_still_cannot_map_to_male_anatomy(self) -> None:
+        segment = self._prepared_zh("她的阴蒂微微颤抖。")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("그녀의 음경이 미세하게 떨렸다."),
+            segment,
+        ).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r63_arousal_fluid_still_cannot_become_semen(self) -> None:
+        segment = self._prepared_zh("爱液顺着大腿流下。")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("정액이 허벅지를 따라 흘러내렸다."),
+            segment,
+        ).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r64_known_euphemism_cannot_become_literal_object(self) -> None:
+        segment = self._prepared_zh("她轻轻抚摸自己的花壶。")
+        item = ValidationCoordinator(
+            self.config.validators, self.engine, self.profile
+        ).evaluate_single(
+            SingleTranslationParser().parse("그녀는 자신의 화분을 가볍게 쓰다듬었다."),
+            segment,
+        ).by_segment_id[segment.id]
+
+        self.assertIsNone(item.translation)
+        self.assertIn(
+            "NOVEL_TERM_MISTRANSLATION",
+            [issue.code for issue in item.result.issues],
+        )
+
+    def test_r65_style_only_risk_is_valid_without_retry(self) -> None:
+        segment = self._prepared_zh("她轻轻抚摸自己的大腿。")
+        translator = ScriptedTranslator(["그녀는 자신의 대퇴부를 가볍게 쓰다듬었다."])
+        checkpointed: list[str] = []
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+            on_valid=lambda item: checkpointed.append(item.id),
+        )
+
+        result = recovery.translate_segment(segment)
+
+        self.assertFalse(result.failed)
+        self.assertEqual(segment.status, SegmentStatus.VALID)
+        self.assertEqual(segment.attempt_count, 1)
+        self.assertEqual(len(translator.calls), 1)
+        self.assertEqual(checkpointed, [segment.id])
+        self.assertIn(
+            "NOVEL_REGISTER_MISMATCH",
+            [issue.code for issue in segment.validation_issues],
+        )
+
+    def test_r66_semantic_error_repairs_only_current_segment(self) -> None:
+        first = self._prepared_zh("她推开房门。", "SEG_00000066_GOOD")
+        second = self._prepared_zh("她回到主卧。", "SEG_00000066_BAD")
+
+        def repair(prompt: str) -> str:
+            self.assertIn("NOVEL_TERM_MISTRANSLATION", prompt)
+            self.assertIn("의미 범주=main_bedroom", prompt)
+            self.assertIn("금지 의미/표현", prompt)
+            self.assertNotIn("그녀는 주방으로 돌아갔다.", prompt)
+            self.assertNotIn(first.id, prompt)
+            self.assertNotIn(second.id, prompt)
+            return "그녀는 안방으로 돌아갔다."
+
+        translator = ScriptedTranslator(
+            [
+                "그녀는 방문을 열었다.",
+                "그녀는 주방으로 돌아갔다.",
+                repair,
+            ]
+        )
+        recovery = RecoveryEngine(
+            translator,
+            SingleTranslationParser(),
+            ValidationCoordinator(self.config.validators, self.engine, self.profile),
+            self.engine,
+            self.config.recovery,
+            self.config.translation,
+            self.profile,
+        )
+
+        result = recovery.translate_batch([first, second])
+
+        self.assertFalse(result.failed)
+        self.assertEqual(first.translation, "그녀는 방문을 열었다.")
+        self.assertEqual(first.attempt_count, 1)
+        self.assertEqual(second.translation, "그녀는 안방으로 돌아갔다.")
+        self.assertEqual(second.attempt_count, 2)
+        self.assertTrue(second.was_repaired)
+        self.assertEqual(len(translator.calls), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

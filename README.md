@@ -24,7 +24,7 @@ TXT
  -> language detection
  -> placeholder protection
  -> context build
- -> source-triggered novel terminology hints
+ -> source-triggered novel terminology/register/name hints
  -> HY-MT native single-Segment request (internal ID is not exposed)
  -> Ollama translation text
  -> parse once
@@ -162,6 +162,8 @@ backup/novel.*.txt    실행 전 원본 백업
 - 일반 Segment는 설정된 단건 재시도 횟수를 소진하면 FAILED가 되며, 긴 Segment만 안전한 자식 조각으로 분할한다.
 - placeholder 값·개수·순서가 틀리면 원래 위치를 추정하지 않고 실패 처리한다.
 - `novel` 중국어 원문은 현재 Segment에 실제 등장한 용어 힌트만 prompt에 추가하며 결과 문자열을 사후 치환하지 않는다.
+- `novel`은 객관적 의미 범주 오류(ERROR)와 임상적이지만 이해 가능한 문체 불일치(RISK)를 분리한다.
+- 문체 RISK만 있는 Segment는 즉시 VALID/checkpoint하며, 설정된 작업 이름 매핑도 현재 원문에 이름이 있을 때만 prompt에 넣는다.
 - `novel`의 비보호 잔류 한자와 명백한 한국어 중간 절단은 ERROR로 처리해 해당 Segment만 repair한다.
 - 원문 전체를 감싼 인용부호 한 쌍만 빠진 경우에 한해 Python이 같은 바깥 쌍을 결정적으로 복원한다. 내부 인용부호나 괄호 내용 손실은 자동 복원하지 않는다.
 - 넓은 부정·방향·상태 RISK는 보수적으로 표시하며 RISK만 있는 Segment는 재번역하지 않는다.
@@ -181,6 +183,6 @@ python -m unittest discover -s tests -v
 ```
 
 `tests/regression/test_regression_cases.py`에는 레거시 parser 호환 회귀를 포함해
-`R01`부터 Round 5 소설 품질 강화의 `R55`까지 각각의 회귀 테스트가 존재한다.
+`R01`부터 Round 5.1 소설 문체 강화의 `R66`까지 각각의 회귀 테스트가 존재한다.
 통합 테스트는 로컬 임시 HTTP 서버로 Ollama API 계약을 재현하여
 `main.py input.txt`부터 백업, 한국어 TXT, SQLite, QA JSON 생성까지 검증한다.

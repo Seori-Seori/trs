@@ -10,11 +10,14 @@
 6. `docs/V6_MIGRATION.md`
 7. `docs/V7_0_ROUND4_HYMT_NATIVE_PROTOCOL.md`
 8. `docs/V7_0_ROUND5_NOVEL_QUALITY_HARDENING.md`
+9. `docs/V7_0_ROUND5_1_NOVEL_REGISTER_FIX.md`
 
 Round별 승인 문서는 초기 설계를 보정한다. 현재 기본 HY-MT wire protocol은 Round 4의
 ID 없는 단일 Segment native 요청이며, 이전 문서의 row-ID batching 설명보다 우선한다.
 Round 5는 이 wire protocol을 바꾸지 않고 소설 용어·잔류 한자·절단·안전한 바깥
 인용부호 복원과 RISK 정밀도만 강화한다.
+Round 5.1은 의미 오류와 장르 문체 RISK를 분리하고 source-triggered register/name
+힌트를 추가한다. 전역 glossary dump나 결과 문자열 치환보다 우선하는 최신 품질 계약이다.
 
 ## 구현 목표
 

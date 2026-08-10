@@ -263,6 +263,15 @@ def load_profile(name_or_path: str | Path = "novel") -> dict[str, Any]:
         isinstance(item, str) and item for item in cjk_whitelist
     ):
         raise ConfigError("Profile cjk_residue_whitelist must be a string list")
+    name_map = profile.get("name_map", {})
+    if not isinstance(name_map, dict) or not all(
+        isinstance(source, str)
+        and source.strip()
+        and isinstance(korean, str)
+        and korean.strip()
+        for source, korean in name_map.items()
+    ):
+        raise ConfigError("Profile name_map must map non-empty strings to strings")
     validation = profile.get("validation", {})
     if not isinstance(validation, dict):
         raise ConfigError("Profile validation policy must be a JSON object")

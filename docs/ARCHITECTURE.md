@@ -35,6 +35,7 @@ seori_translator/
 │  ├─ language.py
 │  ├─ placeholders.py
 │  ├─ terminology.py
+│  ├─ novel_register.py
 │  └─ hashing.py
 ├─ adapters/
 │  ├─ base.py
@@ -48,10 +49,12 @@ seori_translator/
 │  ├─ korean.py
 │  ├─ placeholders.py
 │  ├─ terminology.py
+│  ├─ register.py
 │  └─ risk.py
 ├─ profiles/
 │  ├─ novel.json
-│  └─ novel_zh_terms.json
+│  ├─ novel_zh_terms.json
+│  └─ novel_register.json
 ├─ projects/
 ├─ output/
 ├─ backup/
@@ -144,7 +147,7 @@ Adapter.load
  -> protect placeholders
  -> checkpoint lookup
  -> context build
- -> select source-triggered novel terminology hints
+ -> select source-triggered novel terminology/register/name hints
  -> build native single-Segment prompt without exposing internal ID
  -> translator.translate text only
  -> parse/interpret response ONCE as the known Segment candidate
@@ -154,6 +157,7 @@ Adapter.load
  -> deterministic full-span outer quote normalization when unambiguous
  -> risk detection
  -> novel CJK / truncation / source-anchored terminology validation
+ -> source-anchored novel register RISK validation
  -> accept valid segments immediately
  -> checkpoint valid segments immediately
  -> partial repair failed Segment only
@@ -166,6 +170,9 @@ Adapter.load
 정상 Segment를 실패 Segment와 함께 다시 모델에 보내면 안 된다.
 용어 데이터는 현재 immutable source에 실제로 등장한 항목만 prompt에 포함하며, 최종
 번역문에 대한 전역 문자열 치환에는 사용하지 않는다.
+객관적인 의미 범주 오류만 ERROR repair 대상으로 삼고, 의미는 안전하지만 임상적이거나
+딱딱한 장르 문체 불일치는 `NOVEL_REGISTER_MISMATCH` RISK로 남겨 자동 재시도하지 않는다.
+작업 이름 매핑은 profile에서 한 번 구성하고 현재 source에 해당 이름이 있는 요청에만 전달한다.
 
 ## 7. v6에서 반드시 계승할 동작
 
@@ -238,6 +245,9 @@ ERROR
 source-anchored 용어 범주 오역을 ERROR로 처리한다. 원문 전체를 감싼 인용부호 한
 쌍만 누락된 경우에는 같은 쌍만 복원할 수 있지만 내부 인용부호·괄호 안 의미 손실은
 모델 repair 없이 추정 복원하지 않는다.
+소설 문체 validator는 알려진 구어·비속어·완곡어 source와 과도한 임상 표현이 함께
+관측되고 의료 문맥이 아닐 때만 RISK를 낸다. 이 RISK는 candidate를 고치거나 repair
+budget을 소비하지 않는다.
 
 ## 11. Adapter 계약
 

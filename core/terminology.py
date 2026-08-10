@@ -17,6 +17,7 @@ class NovelTermHint:
     source: str
     scope: str
     language: str
+    meaning_class: str
     meaning: str
     prompt_hint: str
     preferred_korean: tuple[str, ...] = ()
@@ -61,14 +62,22 @@ def load_novel_term_hints() -> tuple[NovelTermHint, ...]:
         source = entry.get("source")
         scope = entry.get("scope")
         language = entry.get("language")
+        meaning_class = entry.get("meaning_class")
         meaning = entry.get("meaning")
         prompt_hint = entry.get("prompt_hint")
         if not all(
             isinstance(value, str) and value
-            for value in (source, scope, language, meaning, prompt_hint)
+            for value in (
+                source,
+                scope,
+                language,
+                meaning_class,
+                meaning,
+                prompt_hint,
+            )
         ):
             raise ValueError(
-                "Novel terminology source/scope/language/meaning/prompt_hint must be strings"
+                "Novel terminology source/scope/language/meaning fields must be strings"
             )
         if scope != "novel":
             raise ValueError(f"Unsupported novel terminology scope: {scope!r}")
@@ -77,6 +86,7 @@ def load_novel_term_hints() -> tuple[NovelTermHint, ...]:
                 source=source,
                 scope=scope,
                 language=language,
+                meaning_class=meaning_class,
                 meaning=meaning,
                 prompt_hint=prompt_hint,
                 preferred_korean=_string_tuple(

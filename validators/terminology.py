@@ -34,6 +34,7 @@ def validate_novel_terminology(
             f"Source term {hint.source!r} was mapped to a disallowed meaning class",
             "terminology",
             source_term=hint.source,
+            meaning_class=hint.meaning_class,
             meaning=hint.meaning,
             disallowed_matches=observed,
             preferred_korean=list(hint.preferred_korean),

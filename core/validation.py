@@ -10,6 +10,7 @@ from core.segment import Segment, ValidationResult, ValidationSeverity
 from core.terminology import is_novel_profile
 from validators.korean import validate_korean
 from validators.placeholders import validate_placeholders, validate_restored_tokens
+from validators.register import validate_novel_register
 from validators.risk import validate_risks
 from validators.structure import (
     restore_full_span_outer_quote,
@@ -109,6 +110,15 @@ class ValidationCoordinator:
                     )
                 )
                 result.extend(
+                    validate_novel_register(
+                        segment.source,
+                        candidate,
+                        segment.source_language,
+                        self.profile,
+                        context=segment.context_before + segment.context_after,
+                    )
+                )
+                result.extend(
                     validate_risks(
                         segment.source, candidate, self.config, self.policy
                     )
@@ -165,6 +175,15 @@ class ValidationCoordinator:
                 translation,
                 segment.source_language,
                 self.profile,
+            )
+        )
+        result.extend(
+            validate_novel_register(
+                segment.source,
+                translation,
+                segment.source_language,
+                self.profile,
+                context=segment.context_before + segment.context_after,
             )
         )
         result.extend(

@@ -8,6 +8,7 @@ from core.checkpoint import CheckpointStore
 from core.config import AppConfig
 from core.diagnostics import FailureDebugStore
 from core.language import detect_language
+from core.novel_register import NovelJobNameMap
 from core.parser import SingleTranslationParser
 from core.placeholders import PlaceholderEngine
 from core.recovery import RecoveryEngine
@@ -53,6 +54,7 @@ class TranslationPipeline:
             protect_internal_newlines=config.placeholders.protect_internal_newlines,
         )
         self.parser = SingleTranslationParser()
+        self.name_map = NovelJobNameMap.from_profile(profile)
         self.validator = ValidationCoordinator(
             config.validators, self.placeholder_engine, profile
         )
@@ -112,6 +114,7 @@ class TranslationPipeline:
             on_validated=(
                 self.failure_debug.clear if self.failure_debug is not None else None
             ),
+            name_map=self.name_map,
         )
         self.progress(
             f"총 {len(segments)}개 문단: 재개 {resumed}, 한국어 유지 {already_korean}, 번역 대상 {len(pending)}"

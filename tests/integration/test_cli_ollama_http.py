@@ -51,6 +51,7 @@ class _OllamaHandler(BaseHTTPRequestHandler):
             "壊れた": "복구 번역",
             "「她回答了。」": "그녀는 대답했다.",
             "她触碰阴蒂。": "그녀는 클리토리스를 만졌다.",
+            "鱼鱼揉着自己的大腿。": "위위는 자신의 대퇴부를 쓰다듬었다.",
         }
         if (
             source in type(self).fail_once_sources
@@ -261,6 +262,70 @@ class CliOllamaHttpIntegrationTests(unittest.TestCase):
                 self.assertEqual(report["summary"]["valid"], 2)
                 self.assertEqual(report["summary"]["failed"], 0)
                 self.assertEqual(report["summary"]["warnings"], 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_round5_1_register_risk_and_job_name_hint_flow(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                _OllamaHandler.requests = []
+                _OllamaHandler.source_counts = {}
+                _OllamaHandler.fail_once_sources = set()
+                temp = Path(directory)
+                input_path = temp / "input.txt"
+                input_path.write_text(
+                    "鱼鱼揉着自己的大腿。", encoding="utf-8"
+                )
+
+                config = json.loads(
+                    (ROOT / "config.json").read_text(encoding="utf-8")
+                )
+                config["ollama"]["base_url"] = (
+                    f"http://127.0.0.1:{server.server_port}"
+                )
+                config["ollama"]["model"] = "test-hy-mt"
+                config_path = temp / "config.json"
+                config_path.write_text(
+                    json.dumps(config, ensure_ascii=False), encoding="utf-8"
+                )
+
+                self.assertEqual(
+                    run(
+                        [
+                            str(input_path),
+                            "--config",
+                            str(config_path),
+                            "--mode",
+                            "novel",
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    (temp / "input.ko.txt").read_text(encoding="utf-8"),
+                    "위위는 자신의 대퇴부를 쓰다듬었다.",
+                )
+                self.assertEqual(len(_OllamaHandler.requests), 1)
+                prompt = _OllamaHandler.requests[0]["prompt"]
+                self.assertIn("- 鱼鱼:", prompt)
+                self.assertIn("'위위'", prompt)
+                self.assertIn("장르 문체 참고", prompt)
+                self.assertIn("大腿", prompt)
+                self.assertIn("허벅지", prompt)
+                self.assertNotIn("SEG_", prompt)
+                self.assertNotIn("ADULT_", prompt)
+
+                report = json.loads(
+                    (temp / "input.qa.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(report["summary"]["valid"], 1)
+                self.assertEqual(report["summary"]["failed"], 0)
+                self.assertEqual(report["summary"]["risks"], 1)
         finally:
             server.shutdown()
             server.server_close()

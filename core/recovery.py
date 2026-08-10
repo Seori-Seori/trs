@@ -6,6 +6,7 @@ from typing import Any
 
 from core.batching import safe_split_with_separators
 from core.config import RecoveryConfig, TranslationConfig
+from core.novel_register import NovelJobNameMap
 from core.parser import SingleTranslationParser
 from core.placeholders import PlaceholderEngine
 from core.prompting import PromptBuildError, build_single_translation_prompt
@@ -41,6 +42,7 @@ class RecoveryEngine:
         on_valid_batch: Callable[[list[Segment]], None] | None = None,
         on_failed_attempt: Callable[[Segment], None] | None = None,
         on_validated: Callable[[Segment], None] | None = None,
+        name_map: NovelJobNameMap | None = None,
     ) -> None:
         self.translator = translator
         self.parser = parser
@@ -53,6 +55,7 @@ class RecoveryEngine:
         self.on_valid_batch = on_valid_batch
         self.on_failed_attempt = on_failed_attempt or (lambda _segment: None)
         self.on_validated = on_validated or (lambda _segment: None)
+        self.name_map = name_map or NovelJobNameMap.from_profile(profile)
         self.global_issues: list[Any] = []
 
     def translate_segment(self, segment: Segment) -> RecoveryResult:
@@ -112,7 +115,9 @@ class RecoveryEngine:
             raise RuntimeError(
                 f"Invariant violation: VALID segment {segment.id} entered request"
             )
-        prompt = build_single_translation_prompt(segment, self.profile, mode=mode)
+        prompt = build_single_translation_prompt(
+            segment, self.profile, mode=mode, name_map=self.name_map
+        )
         limit = self.translation_config.max_prompt_chars
         if len(prompt) > limit:
             raise PromptBuildError(
